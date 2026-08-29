@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gantt Chart - P6 Analyzer</title>
+    
+    <!-- Frappe Gantt CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css">
+    
+    <!-- Frappe Gantt JS -->
+    <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <style>
+        /* Gantt-specific styles */
+        .gantt-container {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            overflow-x: auto;
+        }
+        
+        .gantt-controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .gantt-legend {
+            display: flex;
+            gap: 1.5rem;
+            padding: 1rem;
+            background: #f8fafc;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .legend-box {
+            width: 20px;
+            height: 14px;
+            border-radius: 3px;
+        }
+        
+        /* Gantt bar colors */
+        .gantt .bar-wrapper.critical .bar { fill: #dc2626; }
+        .gantt .bar-wrapper.critical .bar-progress { fill: #991b1b; }
+        .gantt .bar-wrapper.completed .bar { fill: #10b981; }
+        .gantt .bar-wrapper.completed .bar-progress { fill: #065f46; }
+        .gantt .bar-wrapper.normal .bar { fill: #3b82f6; }
+        .gantt .bar-wrapper.normal .bar-progress { fill: #1e40af; }
+        
+        .view-mode-btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #cbd5e1;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        
+        .view-mode-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header (same as main page) -->
+    <header class="app-header">
+        <div class="header-content">
+            <div class="logo-section">
+                <span class="logo-icon">📊</span>
+                <div>
+                    <h1>P6 Schedule Analyzer</h1>
+                    <p class="subtitle">Gantt Chart View</p>
+                </div>
+            </div>
+            
+            <div class="header-actions">
+                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <div class="gantt-controls">
+            <label>Show first: 
+                <select id="maxActivities" onchange="loadGantt()">
+                    <option value="50">50 activities</option>
+                    <option value="100">100 activities</option>
+                    <option value="200" selected>200 activities</option>
+                    <option value="500">500 activities</option>
+                </select>
+            </label>
+            
+            <div style="display:flex; gap:0.5rem;">
+                <button class="view-mode-btn" onclick="changeViewMode('Day')">Day</button>
+                <button class="view-mode-btn active" onclick="changeViewMode('Week')">Week</button>
+                <button class="view-mode-btn" onclick="changeViewMode('Month')">Month</button>
+                <button class="view-mode-btn" onclick="changeViewMode('Year')">Year</button>
+            </div>
+        </div>
+
+        <div class="gantt-legend">
+            <div class="legend-item">
+                <div class="legend-box" style="background:#dc2626;"></div>
+                <span>🔴 Critical Path</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="background:#3b82f6;"></div>
+                <span>🔵 Normal Activity</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="background:#10b981;"></div>
+                <span>✅ Completed</span>
+            </div>
+        </div>
+
+        <div id="loadingMessage" style="text-align:center; padding:3rem;">
+            <p>Loading Gantt chart...</p>
+        </div>
+
+        <div class="gantt-container" id="ganttContainer" style="display:none;">
+            <svg id="gantt"></svg>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='gantt.js') }}"></script>
+</body>
+</html>

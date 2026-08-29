@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<!--
+    MAIN DASHBOARD PAGE
+    ===================
+    This is what users see when they visit the website.
+    
+    Structure:
+    - Header (title + upload button)
+    - Summary cards (big numbers)
+    - Charts (visual data)
+    - Tables (detailed data)
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P6 Schedule Analyzer</title>
+    
+    <!-- Chart.js: Library for beautiful charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- DataTables: Library for searchable/sortable tables -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+    
+    <!-- Our custom styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+    
+    <!-- ═══════════ HEADER ═══════════ -->
+  <header class="app-header">
+    <div class="header-content">
+        <div class="logo-section">
+            {% if config.use_logo_image %}
+                <img src="{{ url_for('static', filename=config.logo_path) }}" 
+                     alt="Logo" style="height: 45px;">
+            {% else %}
+                <span class="logo-icon">📊</span>
+            {% endif %}
+            <div>
+                <h1>{{ config.app_title }}</h1>
+                <p class="subtitle">{{ config.app_subtitle }}</p>
+            </div>
+        </div>
+        
+        <div class="header-actions">
+            <button id="loadSampleBtn" class="btn btn-secondary">📄 Load Sample</button>
+            <button id="uploadBtn" class="btn btn-primary">📁 Upload XER</button>
+            {% if config.features.gantt %}
+                <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
+            {% endif %}
+            {% if config.features.comparison %}
+                <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+            {% endif %}
+            {% if config.features.evm %}
+                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+            {% endif %}
+            {% if config.features.export %}
+                <button id="exportBtn" class="btn btn-success" style="display:none;">
+                    ⬇️ Export Excel
+                </button>
+            {% endif %}
+            <input type="file" id="fileInput" accept=".xer" style="display:none;">
+        </div>
+    </div>
+</header>
+
+    <!-- ═══════════ MAIN CONTENT ═══════════ -->
+    <main class="app-main">
+        
+        <!-- WELCOME SCREEN (shown when no file loaded) -->
+        <div id="welcomeScreen" class="welcome-screen">
+            <div class="welcome-content">
+                <div class="welcome-icon">🚀</div>
+                <h2>Welcome to P6 Schedule Analyzer</h2>
+                <p>Upload your Primavera P6 XER file to get started</p>
+                
+                <div class="upload-zone" id="dropZone">
+                    <div class="upload-zone-content">
+                        <span class="upload-icon">📤</span>
+                        <p><strong>Drop your XER file here</strong></p>
+                        <p>or click "Upload XER" button above</p>
+                    </div>
+                </div>
+                
+                <div class="features-grid">
+                    <div class="feature">
+                        <span>📊</span>
+                        <h3>Interactive Dashboard</h3>
+                        <p>Beautiful charts and metrics</p>
+                    </div>
+                    <div class="feature">
+                        <span>🏥</span>
+                        <h3>DCMA 14-Point</h3>
+                        <p>Automated schedule health check</p>
+                    </div>
+                    <div class="feature">
+                        <span>🔴</span>
+                        <h3>Critical Path</h3>
+                        <p>Instant identification & analysis</p>
+                    </div>
+                    <div class="feature">
+                        <span>📤</span>
+                        <h3>Excel Export</h3>
+                        <p>Download detailed reports</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOADING SPINNER -->
+        <div id="loadingScreen" class="loading-screen" style="display:none;">
+            <div class="spinner"></div>
+            <p id="loadingText">Analyzing your schedule...</p>
+        </div>
+
+        <!-- DASHBOARD (shown after file loaded) -->
+        <div id="dashboard" class="dashboard" style="display:none;">
+            
+            <!-- File info bar -->
+            <div class="file-info-bar">
+                <span>📁 <strong id="fileName">--</strong></span>
+                <span>🕐 Analyzed: <span id="analyzedAt">--</span></span>
+                <span>📌 Project: <span id="projectName">--</span></span>
+            </div>
+
+            <!-- SUMMARY CARDS -->
+            <section class="summary-cards" id="summaryCards">
+                <!-- Cards inserted by JavaScript -->
+            </section>
+
+            <!-- CHARTS ROW 1 -->
+            <section class="charts-grid">
+                <div class="chart-card">
+                    <h3>🥧 Activity Status</h3>
+                    <div class="chart-container">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-card">
+                    <h3>📊 Float Distribution</h3>
+                    <div class="chart-container">
+                        <canvas id="floatChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="chart-card">
+                    <h3>🌳 Top WBS by Activity Count</h3>
+                    <div class="chart-container">
+                        <canvas id="wbsChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- DCMA HEALTH CHECK -->
+            <section class="dcma-section">
+                <h2>🏥 DCMA 14-Point Health Check</h2>
+                <div class="dcma-grid" id="dcmaGrid">
+                    <!-- DCMA cards inserted by JavaScript -->
+                </div>
+            </section>
+
+            <!-- TOP ISSUES -->
+            <section class="issues-section" id="issuesSection" style="display:none;">
+                <h2>⚠️ Top Issues Found</h2>
+                <div id="issuesList" class="issues-list">
+                    <!-- Issues inserted by JavaScript -->
+                </div>
+            </section>
+
+            <!-- TABS -->
+            <section class="tabs-section">
+                <div class="tabs-header">
+                    <button class="tab-btn active" data-tab="activities">📌 All Activities</button>
+                    <button class="tab-btn" data-tab="critical">🔴 Critical Path</button>
+                </div>
+                
+                <div class="tab-content active" id="tab-activities">
+                    <table id="activitiesTable" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Name</th>
+                                <th>WBS</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Duration</th>
+                                <th>Float</th>
+                                <th>Start</th>
+                                <th>Finish</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                
+                <div class="tab-content" id="tab-critical">
+                    <table id="criticalTable" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Name</th>
+                                <th>WBS</th>
+                                <th>Duration</th>
+                                <th>Float</th>
+                                <th>Status</th>
+                                <th>Start</th>
+                                <th>Finish</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- ═══════════ FOOTER ═══════════ -->
+    <footer class="app-footer">
+        <p>P6 Schedule Analyzer | Built with Python + Flask + Chart.js</p>
+    </footer>
+
+    <!-- Our custom JavaScript -->
+    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

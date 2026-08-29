@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EVM & S-Curves - P6 Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <style>
+        .evm-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .metric-card {
+            background: white;
+            padding: 1.25rem;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            border-top: 4px solid;
+        }
+        
+        .metric-card.good { border-top-color: #10b981; }
+        .metric-card.warning { border-top-color: #f59e0b; }
+        .metric-card.bad { border-top-color: #dc2626; }
+        .metric-card.neutral { border-top-color: #3b82f6; }
+        
+        .metric-label {
+            color: #64748b;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .metric-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        
+        .metric-subtitle {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-top: 0.25rem;
+        }
+        
+        .status-good { color: #10b981; }
+        .status-warning { color: #f59e0b; }
+        .status-bad { color: #dc2626; }
+    </style>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-content">
+            <div class="logo-section">
+                <span class="logo-icon">📊</span>
+                <div>
+                    <h1>EVM & S-Curves</h1>
+                    <p class="subtitle">Earned Value Management</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
+                <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <div id="loadingMessage" style="text-align:center; padding:3rem;">
+            <p>Loading EVM data...</p>
+        </div>
+
+        <div id="evmContent" style="display:none;">
+            <div class="file-info-bar">
+                <span>📁 <strong id="fileName">--</strong></span>
+                <span>📅 Data Date: <strong id="dataDate">--</strong></span>
+            </div>
+
+            <!-- Performance Indicators -->
+            <h2 style="margin-bottom:1rem;">📈 Performance Indicators</h2>
+            <div class="evm-metrics" id="performanceMetrics"></div>
+
+            <!-- Financial Metrics -->
+            <h2 style="margin-bottom:1rem;">💰 Financial Metrics</h2>
+            <div class="evm-metrics" id="financialMetrics"></div>
+
+            <!-- S-Curve -->
+            <div class="chart-card" style="margin-bottom:2rem;">
+                <h3>📈 Project S-Curve</h3>
+                <p style="color:#64748b; font-size:0.85rem; margin-bottom:1rem;">
+                    Cumulative value over time showing Planned (PV), Earned (EV), and Actual Cost (AC)
+                </p>
+                <div style="height:400px;">
+                    <canvas id="scurveChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Explanation -->
+            <div class="dcma-section">
+                <h3>📖 What Do These Metrics Mean?</h3>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+                    <div>
+                        <h4>SPI (Schedule Performance Index)</h4>
+                        <p style="font-size:0.9rem; color:#64748b;">
+                            <strong>≥ 1.0:</strong> Ahead of schedule ✅<br>
+                            <strong>&lt; 1.0:</strong> Behind schedule ❌
+                        </p>
+                    </div>
+                    <div>
+                        <h4>CPI (Cost Performance Index)</h4>
+                        <p style="font-size:0.9rem; color:#64748b;">
+                            <strong>≥ 1.0:</strong> Under budget ✅<br>
+                            <strong>&lt; 1.0:</strong> Over budget ❌
+                        </p>
+                    </div>
+                    <div>
+                        <h4>EAC (Estimate at Completion)</h4>
+                        <p style="font-size:0.9rem; color:#64748b;">
+                            Forecasted total cost when project is complete.
+                        </p>
+                    </div>
+                    <div>
+                        <h4>VAC (Variance at Completion)</h4>
+                        <p style="font-size:0.9rem; color:#64748b;">
+                            Difference between budget and forecasted final cost.<br>
+                            <strong>Positive:</strong> Under budget ✅
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='evm.js') }}"></script>
+</body>
+</html>

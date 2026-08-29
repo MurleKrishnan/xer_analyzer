@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Compare Schedules - P6 Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <style>
+        .compare-upload {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+        
+        .file-drop {
+            background: white;
+            border: 3px dashed #cbd5e1;
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .file-drop:hover, .file-drop.dragover {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+        
+        .file-drop.has-file {
+            border-color: #10b981;
+            background: #ecfdf5;
+        }
+        
+        .file-drop h3 {
+            margin-bottom: 0.5rem;
+        }
+        
+        .comparison-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+        
+        .change-badge {
+            padding: 0.15rem 0.5rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+        
+        .change-badge.high { background: #fee2e2; color: #991b1b; }
+        .change-badge.medium { background: #fef3c7; color: #92400e; }
+        .change-badge.low { background: #dbeafe; color: #1e40af; }
+        
+        .delta-positive { color: #dc2626; font-weight: 600; }
+        .delta-negative { color: #10b981; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-content">
+            <div class="logo-section">
+                <span class="logo-icon">🔄</span>
+                <div>
+                    <h1>Schedule Comparison</h1>
+                    <p class="subtitle">Baseline vs Current Analysis</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
+                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <!-- UPLOAD ZONE -->
+        <div id="uploadSection">
+            <h2>Upload Two XER Files to Compare</h2>
+            <p style="color:#64748b; margin-bottom:1rem;">
+                Compare a baseline schedule with an updated one to see what changed.
+            </p>
+            
+            <div class="compare-upload">
+                <div class="file-drop" id="baselineDrop">
+                    <h3>📊 Baseline</h3>
+                    <p>Original / Approved Schedule</p>
+                    <p id="baselineFileName" style="margin-top:1rem; font-weight:600;"></p>
+                    <input type="file" id="baselineInput" accept=".xer" style="display:none;">
+                </div>
+                
+                <div class="file-drop" id="currentDrop">
+                    <h3>📈 Current</h3>
+                    <p>Updated / Latest Schedule</p>
+                    <p id="currentFileName" style="margin-top:1rem; font-weight:600;"></p>
+                    <input type="file" id="currentInput" accept=".xer" style="display:none;">
+                </div>
+            </div>
+            
+            <div style="text-align:center;">
+                <button id="compareBtn" class="btn btn-primary" disabled 
+                        style="padding: 1rem 3rem; font-size: 1.1rem;">
+                    🔍 Compare Schedules
+                </button>
+            </div>
+        </div>
+
+        <!-- LOADING -->
+        <div id="loadingSection" style="display:none; text-align:center; padding:3rem;">
+            <div class="spinner"></div>
+            <p style="margin-top:1rem;">Comparing schedules...</p>
+        </div>
+
+        <!-- RESULTS -->
+        <div id="resultsSection" style="display:none;">
+            <div class="file-info-bar">
+                <span>📊 Baseline: <strong id="baselineName">--</strong></span>
+                <span>📈 Current: <strong id="currentName">--</strong></span>
+                <button onclick="resetComparison()" class="btn btn-secondary" style="margin-left:auto;">
+                    🔄 New Comparison
+                </button>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="comparison-summary" id="summaryCards"></div>
+
+            <!-- Chart -->
+            <div class="chart-card" style="margin-bottom:2rem;">
+                <h3>📊 Change Distribution</h3>
+                <div style="height: 300px;">
+                    <canvas id="changeChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Critical Path Changes -->
+            <div class="dcma-section">
+                <h2>🔴 Critical Path Changes</h2>
+                <div class="charts-grid">
+                    <div>
+                        <h3 style="color:#dc2626;">➕ Newly Critical</h3>
+                        <div id="newlyCriticalList"></div>
+                    </div>
+                    <div>
+                        <h3 style="color:#10b981;">➖ No Longer Critical</h3>
+                        <div id="noLongerCriticalList"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Changed Activities -->
+            <div class="dcma-section">
+                <h2>🔄 Changed Activities</h2>
+                <table id="changedTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Name</th>
+                            <th>WBS</th>
+                            <th>Field</th>
+                            <th>Baseline</th>
+                            <th>Current</th>
+                            <th>Delta</th>
+                            <th>Impact</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <!-- Added Activities -->
+            <div class="dcma-section">
+                <h2>➕ Added Activities</h2>
+                <table id="addedTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Name</th>
+                            <th>WBS</th>
+                            <th>Duration</th>
+                            <th>Start</th>
+                            <th>Finish</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <!-- Deleted Activities -->
+            <div class="dcma-section">
+                <h2>➖ Deleted Activities</h2>
+                <table id="deletedTable" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Name</th>
+                            <th>WBS</th>
+                            <th>Duration</th>
+                            <th>Start</th>
+                            <th>Finish</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='comparison.js') }}"></script>
+</body>
+</html>
