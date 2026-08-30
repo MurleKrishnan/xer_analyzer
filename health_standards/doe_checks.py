@@ -1,13 +1,15 @@
 """
 DOE PM-30 SCHEDULE ASSESSMENT
 ==============================
-95 checks based on:
+Enhanced checks based on:
 - DOE Order 413.3B (Program & Project Management)
 - DOE PM-30 Schedule Assessment Guide
 - DOE-HDBK-1140-2001
+- Plus: Open Ends and FS+Lag detection
 """
 
 from health_standards.base_checker import BaseChecker
+from collections import Counter
 
 
 class DOEChecks(BaseChecker):
@@ -24,6 +26,7 @@ class DOEChecks(BaseChecker):
                 self._progress_measurement(),
                 self._risk_management(),
                 self._earned_value_checks(),
+                self._logic_network_quality(),
             ]
         }
 
@@ -48,7 +51,8 @@ class DOEChecks(BaseChecker):
             'DOE-102', 'Empty WBS Nodes',
             'WBS nodes without any activities',
             len(empty_wbs), len(self.wbs_nodes) or 1, 5, 'DOE', 'low', 'WBS Structure',
-            'Remove empty WBS nodes or add planned activities.'
+            'Remove empty WBS nodes or add planned activities.',
+            empty_wbs
         ))
         
         # DOE-103: WBS Depth
@@ -62,7 +66,6 @@ class DOEChecks(BaseChecker):
         ))
         
         # DOE-104: Activities per WBS Distribution
-        from collections import Counter
         wbs_counts = Counter(a.get('wbs_id', '') for a in self.activities)
         if wbs_counts:
             max_activities = max(wbs_counts.values())
@@ -157,7 +160,6 @@ class DOEChecks(BaseChecker):
         ))
         
         # DOE-207: Duplicate Activity IDs
-        from collections import Counter
         code_counts = Counter(a.get('task_code', '') for a in self.activities if a.get('task_code'))
         dup_ids = [code for code, count in code_counts.items() if count > 1]
         checks.append(self.make_check(
@@ -337,7 +339,6 @@ class DOEChecks(BaseChecker):
             ))
         
         # DOE-504: Schedule Contingency
-        # Estimate based on avg float
         if floats:
             avg_float = sum(floats) / len(floats)
             checks.append(self.make_metric(
@@ -347,6 +348,16 @@ class DOEChecks(BaseChecker):
                 threshold_min=0, severity='low',
                 info_only=True
             ))
+        
+        # DOE-505: Negative Float (High-Risk Indicator)
+        neg_float = [a for a in self.incomplete if a.get('total_float_days', 0) < 0]
+        checks.append(self.make_check(
+            'DOE-505', 'Negative Float Activities',
+            'Activities behind schedule constraints',
+            len(neg_float), total, 0, 'DOE', 'critical', 'Risk',
+            'Immediate recovery planning required for negative float.',
+            neg_float
+        ))
         
         return {'name': 'Risk Management', 'checks': checks}
 
@@ -388,3 +399,106 @@ class DOEChecks(BaseChecker):
             ))
         
         return {'name': 'Earned Value Compliance', 'checks': checks}
+
+    def _logic_network_quality(self):
+        """NEW CATEGORY: Logic Network Quality (Open Ends + FS+Lag)."""
+        checks = []
+        total = len(self.incomplete) or 1
+        rel_total = len(self.relationships) or 1
+        
+        # ─── DOE-701: Missing Predecessors ───
+        missing_pred = [a for a in self.incomplete 
+                       if a.get('task_id', '') not in self.engine.predecessors]
+        checks.append(self.make_check(
+            'DOE-701', 'Missing Predecessors',
+            'Activities without predecessor logic',
+            len(missing_pred), total, 5, 'DOE', 'high', 'Logic Network',
+            'DOE requires closed-loop logic. Add predecessors.',
+            missing_pred
+        ))
+        
+        # ─── DOE-702: Missing Successors ───
+        missing_succ = [a for a in self.incomplete 
+                       if a.get('task_id', '') not in self.engine.successors]
+        checks.append(self.make_check(
+            'DOE-702', 'Missing Successors',
+            'Activities without successor logic',
+            len(missing_succ), total, 5, 'DOE', 'high', 'Logic Network',
+            'DOE requires closed-loop logic. Add successors.',
+            missing_succ
+        ))
+        
+        # ─── DOE-OPEN-01: Open Start Activities (Enhanced) ───
+        open_start = [a for a in self.incomplete
+                      if a.get('task_id', '') not in self.engine.predecessors
+                      and a.get('task_type') not in ['TT_Mile']]
+        checks.append(self.make_check(
+            'DOE-OPEN-01', 'Open Start Activities',
+            'Non-milestone activities without predecessors',
+            len(open_start), total, 1, 'DOE', 'high', 'Logic Network',
+            'DOE PM-30 requires proper logic. Only start milestones should have no predecessors.',
+            open_start
+        ))
+        
+        # ─── DOE-OPEN-02: Open End Activities (Enhanced) ───
+        open_end = [a for a in self.incomplete
+                    if a.get('task_id', '') not in self.engine.successors
+                    and a.get('task_type') not in ['TT_FinMile']]
+        checks.append(self.make_check(
+            'DOE-OPEN-02', 'Open End Activities',
+            'Non-milestone activities without successors',
+            len(open_end), total, 1, 'DOE', 'high', 'Logic Network',
+            'DOE PM-30 requires proper logic. Only finish milestones should have no successors.',
+            open_end
+        ))
+        
+        # ─── DOE-703: Negative Lags ───
+        neg_lags = [r for r in self.relationships if r.get('lag_days', 0) < 0]
+        checks.append(self.make_check(
+            'DOE-703', 'Negative Lags (Leads)',
+            'DOE does not permit negative lags',
+            len(neg_lags), rel_total, 0, 'DOE', 'high', 'Logic Network',
+            'Remove all negative lags per DOE guidelines.'
+        ))
+        
+        # ─── DOE-704: Excessive Lags ───
+        big_lags = [r for r in self.relationships if r.get('lag_days', 0) > 15]
+        checks.append(self.make_check(
+            'DOE-704', 'Large Lags (>15 days)',
+            'DOE recommends minimizing lags',
+            len(big_lags), rel_total, 3, 'DOE', 'medium', 'Logic Network',
+            'Convert large lags into schedule activities.'
+        ))
+        
+        # ─── DOE-FS-LAG: FS Relationships with Lag ───
+        fs_lag = [r for r in self.relationships
+                  if r.get('pred_type') == 'PR_FS' and r.get('lag_days', 0) > 0]
+        
+        seen = set()
+        affected = []
+        for r in fs_lag:
+            sid = r.get('task_id')
+            if sid and sid not in seen:
+                seen.add(sid)
+                a = self.engine.activity_by_id.get(sid)
+                if a:
+                    affected.append(a)
+        
+        checks.append(self.make_check(
+            'DOE-FS-LAG', 'FS + Lag Relationships',
+            'Finish-to-Start relationships with lag',
+            len(fs_lag), rel_total, 3, 'DOE', 'medium', 'Logic Network',
+            'DOE PM-30 discourages lags. Replace with real activities (e.g., "Cure Time").',
+            affected
+        ))
+        
+        # ─── DOE-705: Non-FS Relationships ───
+        non_fs = [r for r in self.relationships if r.get('pred_type') != 'PR_FS']
+        checks.append(self.make_check(
+            'DOE-705', 'Non-FS Relationships',
+            'DOE prefers Finish-to-Start relationships',
+            len(non_fs), rel_total, 10, 'DOE', 'medium', 'Logic Network',
+            'Use FS relationships wherever possible.'
+        ))
+        
+        return {'name': 'Logic Network Quality', 'checks': checks}

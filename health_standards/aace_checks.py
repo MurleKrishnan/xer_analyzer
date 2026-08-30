@@ -1,11 +1,12 @@
 """
 AACE INTERNATIONAL SCHEDULE PRACTICES
 ======================================
-128 checks based on:
+Enhanced checks based on:
 - AACE RP 29R-03 (Forensic Schedule Analysis)
 - AACE RP 32R-04 (Determining Activity Durations)
 - AACE RP 37R-06 (Schedule Level of Detail)
 - AACE RP 38R-06 (Documenting the Schedule Basis)
+- Plus: Open Ends and FS+Lag detection
 """
 
 from health_standards.base_checker import BaseChecker
@@ -63,7 +64,8 @@ class AACEChecks(BaseChecker):
             'AACE-103', 'Generic Activity Names',
             'Names should be specific and meaningful',
             len(generic), total, 1, 'AACE', 'low', 'Activity Definition',
-            'Use descriptive, action-oriented names.'
+            'Use descriptive, action-oriented names.',
+            generic
         ))
         
         # AACE-104: Milestone Types
@@ -136,8 +138,7 @@ class AACEChecks(BaseChecker):
             long_acts
         ))
         
-        # AACE-205: Duration Rounding (indicator of estimation quality)
-        # Check how many durations are multiples of 5 (may indicate rough estimates)
+        # AACE-205: Duration Rounding
         round_5 = sum(1 for d in durations if d > 0 and d % 5 == 0)
         round_pct = round_5 / len(durations) * 100 if durations else 0
         checks.append(self.make_metric(
@@ -152,8 +153,9 @@ class AACEChecks(BaseChecker):
         return {'name': 'Duration Estimation (RP 32R-04)', 'checks': checks}
 
     def _logic_relationships(self):
-        """Logic quality per AACE."""
+        """Logic quality per AACE + Open Ends + FS+Lag."""
         checks = []
+        total = len(self.real_activities) or 1
         rel_total = len(self.relationships) or 1
         
         # AACE-301: Relationship Type Distribution
@@ -202,11 +204,59 @@ class AACEChecks(BaseChecker):
             ))
         
         # AACE-304: SF Relationships (Almost Never Correct)
+        sf_rels = [r for r in self.relationships if r.get('pred_type') == 'PR_SF']
         checks.append(self.make_check(
             'AACE-304', 'SF Relationships',
             'Start-to-Finish rarely correct',
-            sf, rel_total, 0, 'AACE', 'high', 'Logic',
-            'Verify each SF relationship - usually a mistake.'
+            len(sf_rels), rel_total, 0, 'AACE', 'high', 'Logic',
+            'Verify each SF relationship - usually a mistake.',
+            sf_rels
+        ))
+        
+        # ─── NEW: AACE-OPEN-01: Open Start Activities ───
+        open_start = [a for a in self.real_activities
+                      if a.get('task_id', '') not in self.engine.predecessors
+                      and a.get('task_type') not in ['TT_Mile']]
+        checks.append(self.make_check(
+            'AACE-OPEN-01', 'Open Start Activities',
+            'Non-start-milestone activities without predecessors',
+            len(open_start), total, 1, 'AACE', 'high', 'Logic',
+            'AACE requires proper logic ties. Only start milestones should have no predecessors.',
+            open_start
+        ))
+        
+        # ─── NEW: AACE-OPEN-02: Open End Activities ───
+        open_end = [a for a in self.real_activities
+                    if a.get('task_id', '') not in self.engine.successors
+                    and a.get('task_type') not in ['TT_FinMile']]
+        checks.append(self.make_check(
+            'AACE-OPEN-02', 'Open End Activities',
+            'Non-finish-milestone activities without successors',
+            len(open_end), total, 1, 'AACE', 'high', 'Logic',
+            'AACE requires closed network. Only finish milestones should have no successors.',
+            open_end
+        ))
+        
+        # ─── NEW: AACE-FS-LAG: FS Relationships with Lag ───
+        fs_lag = [r for r in self.relationships
+                  if r.get('pred_type') == 'PR_FS' and r.get('lag_days', 0) > 0]
+        
+        seen = set()
+        affected = []
+        for r in fs_lag:
+            sid = r.get('task_id')
+            if sid and sid not in seen:
+                seen.add(sid)
+                a = self.engine.activity_by_id.get(sid)
+                if a:
+                    affected.append(a)
+        
+        checks.append(self.make_check(
+            'AACE-FS-LAG', 'FS + Lag Relationships',
+            'AACE discourages FS relationships with lag',
+            len(fs_lag), rel_total, 3, 'AACE', 'medium', 'Logic',
+            'Replace lag with a schedule activity for transparency (per AACE RP 38R-06).',
+            affected
         ))
         
         return {'name': 'Logic Relationships', 'checks': checks}
