@@ -1,10 +1,11 @@
 /*
     ADVANCED HEALTH DASHBOARD - MULTI-STANDARD
     ==========================================
-    Includes:
+    Features:
     - Full affected activity lists (scrollable)
     - Multi-standard filtering
     - Top priority actions with expandable activity lists
+    - Excel export for Top Actions with full activity details
 */
 
 let healthData = null;
@@ -17,7 +18,6 @@ document.addEventListener('DOMContentLoaded', function() {
 function selectStandard(standard) {
     currentStandard = standard;
     
-    // Update button states
     document.querySelectorAll('.std-select-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.std === standard);
     });
@@ -54,7 +54,6 @@ function renderDashboard() {
     document.getElementById('loadingMessage').style.display = 'none';
     document.getElementById('healthContent').style.display = 'block';
     
-    // Header
     document.getElementById('overallScore').textContent = healthData.overall_score;
     document.getElementById('totalChecks').textContent = healthData.total_checks;
     document.getElementById('passedChecks').textContent = healthData.passed_checks;
@@ -292,10 +291,19 @@ function applyFilter() {
     renderDetailedResults();
 }
 
+// ═══════════════════════════════════════════
+// EXPORT / DOWNLOAD ACTIONS
+// ═══════════════════════════════════════════
+
 function downloadPDF() {
     window.location.href = `/api/executive-pdf?standard=${currentStandard}`;
 }
 
 function downloadActionsPDF() {
     window.location.href = `/api/actions-pdf?standard=${currentStandard}`;
+}
+
+function downloadActionsExcel() {
+    // Exports Top Actions + full affected activities for selected standard
+    window.location.href = `/api/actions-excel?standard=${currentStandard}`;
 }
