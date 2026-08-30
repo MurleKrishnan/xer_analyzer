@@ -794,89 +794,325 @@ class ScheduleEngine:
             'activities_table': self._get_activities_table_data(),
             'schedule_timeline': self._get_timeline_data(),
         }
-    def get_gantt_data(self, max_activities=200):
+    def get_gantt_data(self, max_activities=50000):
         """
-        Prepare activity data formatted for the Gantt chart.
+        Prepare rich P6-style Gantt data with all columns.
         
-        Frappe Gantt needs data in this format:
-        {
-            id: 'unique_id',
-            name: 'Activity Name',
-            start: 'YYYY-MM-DD',
-            end: 'YYYY-MM-DD',
-            progress: 0-100,
-            dependencies: 'id1,id2'
-        }
+        Returns activities with ALL P6-standard fields plus:
+        - Baseline dates
+        - Budgeted units/cost
+        - Performance metrics
+        - Earned value
         """
         tasks = []
-        activities_added = set()
+        links = []
         
-        # Filter out summary activities
+        # Filter activities
         real_activities = [
             a for a in self.activities
-            if a.get('task_type') not in ['TT_WBS', 'TT_LOE']
+            if a.get('task_type') not in ['TT_WBS']
         ][:max_activities]
         
+        # Get project data date for calculations
+        data_date = self._get_project_data_date()
+        
         for act in real_activities:
-            # Get dates (prefer early dates, fall back to target)
-            start_date = (act.get('early_start_date') or 
-                         act.get('target_start_date') or 
-                         act.get('act_start_date') or '')
+            task_id = act.get('task_id', '')
             
-            end_date = (act.get('early_end_date') or 
-                       act.get('target_end_date') or 
-                       act.get('act_end_date') or '')
+            # Get dates (prefer early, fall back to target/actual)
+            start_date = (act.get('act_start_date') or 
+                         act.get('early_start_date') or 
+                         act.get('target_start_date') or '')
+            
+            end_date = (act.get('act_end_date') or 
+                       act.get('early_end_date') or 
+                       act.get('target_end_date') or '')
             
             if not start_date or not end_date:
                 continue
             
-            # Convert P6 date format to YYYY-MM-DD
             start_clean = self._clean_date_for_gantt(start_date)
             end_clean = self._clean_date_for_gantt(end_date)
             
             if not start_clean or not end_clean:
                 continue
             
-            # Get dependencies (predecessors)
-            task_id = act.get('task_id', '')
-            pred_list = self.predecessors.get(task_id, [])
+            # Baseline dates
+            bl_start = self._clean_date_for_gantt(act.get('target_start_date', ''))
+            bl_end = self._clean_date_for_gantt(act.get('target_end_date', ''))
             
-            # Only include dependencies that we're actually showing
-            dep_ids = []
+            # Duration calculations
+            orig_dur = act.get('original_duration_days', 0)
+            remain_dur = act.get('remaining_duration_days', 0)
+            actual_dur = max(0, orig_dur - remain_dur) if act.get('status_code') != 'TK_NotStart' else 0
+            
+            # Progress
+            progress_pct = self._to_float(act.get('phys_complete_pct', '0'))
+            
+            # Resource/Cost data (from resource assignments if available)
+            budgeted_units = 0
+            actual_units = 0
+            remaining_units = 0
+            budgeted_cost = 0
+            actual_cost = 0
+            remaining_cost = 0
+            earned_value_cost = 0
+            
+            for res in self.resources:
+                if res.get('task_id') == task_id:
+                    budgeted_units += self._to_float(res.get('target_qty', '0'))
+                    actual_units += self._to_float(res.get('act_reg_qty', '0'))
+                    remaining_units += self._to_float(res.get('remain_qty', '0'))
+                    budgeted_cost += self._to_float(res.get('target_cost', '0'))
+                    actual_cost += self._to_float(res.get('act_reg_cost', '0'))
+                    remaining_cost += self._to_float(res.get('remain_cost', '0'))
+            
+            # If no resource data, use duration-based estimates
+            if budgeted_cost == 0 and orig_dur > 0:
+                budgeted_cost = orig_dur * 1000  # $1000/day estimate
+                actual_cost = actual_dur * 1000
+                remaining_cost = remain_dur * 1000
+            
+            # Earned Value = Budgeted Cost × Progress
+            earned_value_cost = budgeted_cost * (progress_pct / 100.0)
+            
+            # Schedule % Complete (based on time elapsed)
+            schedule_pct = self._calculate_schedule_pct(
+                start_clean, end_clean, data_date
+            )
+            
+            # Performance % (Physical / Schedule)
+            performance_pct = (progress_pct / schedule_pct * 100) if schedule_pct > 0 else 0
+            
+            # Constraints
+            constraint_type = act.get('cstr_type', '')
+            constraint_date = act.get('cstr_date', '')
+            
+            # Activity classification
+            is_milestone = act.get('task_type') in ['TT_Mile', 'TT_FinMile']
+            is_loe = act.get('task_type') == 'TT_LOE'
+            is_critical = act.get('is_critical', False)
+            is_completed = act.get('status_code') == 'TK_Complete'
+            is_started = act.get('status_code') in ['TK_Active', 'TK_Complete']
+            
+            # Get predecessors
+            pred_list = self.predecessors.get(task_id, [])
+            pred_display = []
+            for pred in pred_list[:5]:  # Show first 5
+                pred_act = self.activity_by_id.get(pred['task_id'], {})
+                pred_code = pred_act.get('task_code', '')
+                pred_type_short = pred['type'].replace('PR_', '')
+                lag_str = f"+{int(pred['lag_days'])}" if pred['lag_days'] > 0 else str(int(pred['lag_days'])) if pred['lag_days'] < 0 else ''
+                pred_display.append(f"{pred_code}{pred_type_short}{lag_str}")
+            
+            # Get successors
+            succ_list = self.successors.get(task_id, [])
+            succ_display = []
+            for succ in succ_list[:5]:
+                succ_act = self.activity_by_id.get(succ['task_id'], {})
+                succ_code = succ_act.get('task_code', '')
+                succ_type_short = succ['type'].replace('PR_', '')
+                lag_str = f"+{int(succ['lag_days'])}" if succ['lag_days'] > 0 else str(int(succ['lag_days'])) if succ['lag_days'] < 0 else ''
+                succ_display.append(f"{succ_code}{succ_type_short}{lag_str}")
+            
+            # Build task object with ALL P6 fields
+            task = {
+                # Identity
+                'id': task_id,
+                'activity_id': act.get('task_code', ''),
+                'text': act.get('task_name', ''),
+                
+                # WBS
+                'wbs': act.get('wbs_name', ''),
+                'wbs_code': act.get('wbs_code', ''),
+                
+                # Type & Status
+                'activity_type': act.get('type_text', ''),
+                'status': act.get('status_text', ''),
+                'is_milestone': is_milestone,
+                'is_loe': is_loe,
+                'is_critical': is_critical,
+                'is_completed': is_completed,
+                
+                # Durations
+                'start_date': start_clean,
+                'end_date': end_clean,
+                'original_duration': round(orig_dur, 1),
+                'remaining_duration': round(remain_dur, 1),
+                'actual_duration': round(actual_dur, 1),
+                'at_completion_duration': round(orig_dur, 1),
+                
+                # Dates - Early
+                'early_start': self._format_date(act.get('early_start_date', '')),
+                'early_finish': self._format_date(act.get('early_end_date', '')),
+                
+                # Dates - Late
+                'late_start': self._format_date(act.get('late_start_date', '')),
+                'late_finish': self._format_date(act.get('late_end_date', '')),
+                
+                # Dates - Actual
+                'actual_start': self._format_date(act.get('act_start_date', '')),
+                'actual_finish': self._format_date(act.get('act_end_date', '')),
+                
+                # Dates - Baseline
+                'baseline_start': self._format_date(act.get('target_start_date', '')),
+                'baseline_finish': self._format_date(act.get('target_end_date', '')),
+                
+                # Float
+                'total_float': round(act.get('total_float_days', 0), 1),
+                'free_float': round(act.get('free_float_days', 0), 1),
+                
+                # Progress
+                'progress': progress_pct / 100.0,  # DHTMLX needs 0-1
+                'physical_percent': round(progress_pct, 1),
+                'schedule_percent': round(schedule_pct, 1),
+                'performance_percent': round(performance_pct, 1),
+                
+                # Resources & Cost
+                'budgeted_units': round(budgeted_units, 2),
+                'actual_units': round(actual_units, 2),
+                'remaining_units': round(remaining_units, 2),
+                'budgeted_cost': round(budgeted_cost, 2),
+                'actual_cost': round(actual_cost, 2),
+                'remaining_cost': round(remaining_cost, 2),
+                'earned_value': round(earned_value_cost, 2),
+                'at_completion_cost': round(actual_cost + remaining_cost, 2),
+                'variance_at_completion': round(budgeted_cost - (actual_cost + remaining_cost), 2),
+                
+                # Performance Indices
+                'spi': round(earned_value_cost / (budgeted_cost * (schedule_pct/100)) if (budgeted_cost * schedule_pct) > 0 else 0, 3),
+                'cpi': round(earned_value_cost / actual_cost if actual_cost > 0 else 0, 3),
+                
+                # Constraints
+                'constraint_type': self._format_constraint(constraint_type),
+                'constraint_date': self._format_date(constraint_date),
+                
+                # Logic
+                'predecessors': ', '.join(pred_display),
+                'successors': ', '.join(succ_display),
+                'predecessor_count': len(pred_list),
+                'successor_count': len(succ_list),
+                
+                # Calendar
+                'calendar': self._get_calendar_name(act.get('clndr_id', '')),
+                
+                # Custom classes for styling
+                'custom_class': self._get_task_class(is_critical, is_completed, is_milestone, is_loe),
+                
+                # For DHTMLX
+                'type': 'milestone' if is_milestone else 'task',
+                'parent': 0,
+                'open': True,
+            }
+            
+            tasks.append(task)
+            
+            # Build links (dependencies)
             for pred in pred_list:
                 pred_id = pred['task_id']
-                if pred_id in [a.get('task_id') for a in real_activities]:
-                    dep_ids.append(pred_id)
-            
-            # Calculate progress
-            progress = self._to_float(act.get('phys_complete_pct', '0'))
-            
-            # Determine bar color
-            bar_class = 'critical' if act.get('is_critical') else 'normal'
-            if act.get('status_code') == 'TK_Complete':
-                bar_class = 'completed'
-            
-            tasks.append({
-                'id': task_id,
-                'name': f"{act.get('task_code', '')} - {act.get('task_name', '')[:40]}",
-                'start': start_clean,
-                'end': end_clean,
-                'progress': int(progress),
-                'dependencies': ','.join(dep_ids) if dep_ids else '',
-                'custom_class': bar_class,
-                'wbs': act.get('wbs_name', ''),
-                'float_days': act.get('total_float_days', 0),
-                'duration': act.get('original_duration_days', 0),
-                'status': act.get('status_text', ''),
-            })
-            activities_added.add(task_id)
+                if pred_id in [t['id'] for t in tasks]:
+                    link_type_map = {
+                        'PR_FS': '0',  # Finish-to-Start
+                        'PR_SS': '1',  # Start-to-Start
+                        'PR_FF': '2',  # Finish-to-Finish
+                        'PR_SF': '3',  # Start-to-Finish
+                    }
+                    links.append({
+                        'id': f"{pred_id}-{task_id}",
+                        'source': pred_id,
+                        'target': task_id,
+                        'type': link_type_map.get(pred['type'], '0'),
+                        'lag': pred['lag_days'],
+                    })
         
         return {
             'tasks': tasks,
+            'links': links,
             'total': len(tasks),
-            'critical_count': sum(1 for t in tasks if t['custom_class'] == 'critical')
+            'critical_count': sum(1 for t in tasks if t['is_critical']),
+            'data_date': data_date.strftime('%Y-%m-%d') if data_date else '',
         }
 
+    def _clean_date_for_gantt(self, date_string):
+        """Convert P6 date to YYYY-MM-DD."""
+        if not date_string:
+            return None
+        parsed = self._parse_date(date_string)
+        if parsed:
+            return parsed.strftime('%Y-%m-%d')
+        return None
+
+    def _format_date(self, date_string):
+        """Format date as DD-MMM-YY (P6 style)."""
+        if not date_string:
+            return ''
+        parsed = self._parse_date(date_string)
+        if parsed:
+            return parsed.strftime('%d-%b-%y')
+        return ''
+
+    def _format_constraint(self, cstr_type):
+        """Convert constraint code to readable name."""
+        mapping = {
+            'CS_MSO': 'Start On',
+            'CS_MSOA': 'Start On or After',
+            'CS_MSOB': 'Start On or Before',
+            'CS_MEO': 'Finish On',
+            'CS_MEOA': 'Finish On or After',
+            'CS_MEOB': 'Finish On or Before',
+            'CS_MANDSTART': 'Mandatory Start',
+            'CS_MANDFIN': 'Mandatory Finish',
+            'CS_ALAP': 'As Late As Possible',
+        }
+        return mapping.get(cstr_type, '')
+
+    def _get_calendar_name(self, clndr_id):
+        """Get calendar name from ID."""
+        cal = self.calendars.get(clndr_id, {})
+        return cal.get('clndr_name', 'Default')
+
+    def _get_task_class(self, is_critical, is_completed, is_milestone, is_loe):
+        """Determine CSS class for task styling."""
+        if is_completed:
+            return 'gantt-completed'
+        if is_milestone:
+            return 'gantt-milestone-critical' if is_critical else 'gantt-milestone-normal'
+        if is_loe:
+            return 'gantt-loe'
+        if is_critical:
+            return 'gantt-critical'
+        return 'gantt-normal'
+
+    def _calculate_schedule_pct(self, start, end, data_date):
+        """Calculate schedule % complete based on time elapsed."""
+        try:
+            from datetime import datetime
+            start_dt = datetime.strptime(start, '%Y-%m-%d')
+            end_dt = datetime.strptime(end, '%Y-%m-%d')
+            
+            if not data_date:
+                return 0
+            
+            if data_date <= start_dt:
+                return 0
+            if data_date >= end_dt:
+                return 100
+            
+            total = (end_dt - start_dt).days
+            elapsed = (data_date - start_dt).days
+            
+            if total > 0:
+                return (elapsed / total) * 100
+            return 0
+        except:
+            return 0
+
+    def _get_project_data_date(self):
+        """Get the project's data date."""
+        if not self.projects:
+            return None
+        proj = self.projects[0]
+        return self._parse_date(proj.get('last_recalc_date', ''))
     def _clean_date_for_gantt(self, date_string):
         """
         Convert P6 date format to YYYY-MM-DD.

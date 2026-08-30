@@ -47,24 +47,15 @@
         </div>
         
         <div class="header-actions">
-            <button id="loadSampleBtn" class="btn btn-secondary">📄 Load Sample</button>
-            <button id="uploadBtn" class="btn btn-primary">📁 Upload XER</button>
-            {% if config.features.gantt %}
-                <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
-            {% endif %}
-            {% if config.features.comparison %}
-                <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
-            {% endif %}
-            {% if config.features.evm %}
-                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
-            {% endif %}
-            {% if config.features.export %}
-                <button id="exportBtn" class="btn btn-success" style="display:none;">
-                    ⬇️ Export Excel
-                </button>
-            {% endif %}
-            <input type="file" id="fileInput" accept=".xer" style="display:none;">
-        </div>
+    <button id="loadSampleBtn" class="btn btn-secondary">📄 Load Sample</button>
+    <button id="uploadBtn" class="btn btn-primary">📁 Upload XER</button>
+    <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
+    <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+    <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+    <a href="/health" class="btn btn-secondary">🏥 Health</a>
+    <button id="exportBtn" class="btn btn-success" style="display:none;">⬇️ Export Excel</button>
+    <input type="file" id="fileInput" accept=".xer" style="display:none;">
+</div>
     </div>
 </header>
 

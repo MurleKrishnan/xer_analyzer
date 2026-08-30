@@ -3,7 +3,9 @@ P6 SCHEDULE ANALYZER - MAIN WEB APPLICATION (app.py)
 =====================================================
 Integrates Dashboard, Gantt, Comparison, EVM, and Config.
 """
-
+from pdf_report_generator import PDFReportGenerator
+from flask import send_file
+from advanced_health_engine import AdvancedHealthEngine
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -315,7 +317,92 @@ def get_evm_data():
 # ════════════════════════════════════════════
 # LAUNCH SERVER
 # ════════════════════════════════════════════
+@app.route('/health')
+def health_view():
+    """Show the advanced health page."""
+    return render_template('health.html')
 
+
+@app.route('/api/health-data')
+def get_health_data():
+    """Return advanced health analysis data with optional standard filter."""
+    if current_analysis['engine'] is None:
+        return jsonify({'error': 'No data loaded. Upload a file first.'}), 400
+    
+    # Get standard filter from query string
+    selected_standard = request.args.get('standard', 'all')
+    
+    try:
+        health = AdvancedHealthEngine(current_analysis['engine'])
+        results = health.run_all_checks(selected_standard=selected_standard)
+        
+        return jsonify({
+            'success': True,
+            'file_name': current_analysis['file_name'],
+            'data': results
+        })
+    except Exception as e:
+        print(f"❌ Health analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+@app.route('/api/executive-pdf')
+def download_executive_pdf():
+    """Generate and download executive PDF report."""
+    if current_analysis['engine'] is None:
+        return jsonify({'error': 'No data loaded'}), 400
+    
+    selected_standard = request.args.get('standard', 'all')
+    
+    try:
+        # Run health analysis
+        health = AdvancedHealthEngine(current_analysis['engine'])
+        results = health.run_all_checks(selected_standard=selected_standard)
+        
+        # Generate PDF
+        generator = PDFReportGenerator(results, current_analysis['file_name'])
+        pdf_buffer = generator.generate_executive_report()
+        
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name=f"executive_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            mimetype='application/pdf'
+        )
+    except Exception as e:
+        print(f"❌ PDF error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/actions-pdf')
+def download_actions_pdf():
+    """Generate and download action list PDF."""
+    if current_analysis['engine'] is None:
+        return jsonify({'error': 'No data loaded'}), 400
+    
+    selected_standard = request.args.get('standard', 'all')
+    
+    try:
+        health = AdvancedHealthEngine(current_analysis['engine'])
+        results = health.run_all_checks(selected_standard=selected_standard)
+        
+        generator = PDFReportGenerator(results, current_analysis['file_name'])
+        pdf_buffer = generator.generate_actions_report()
+        
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name=f"action_list_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            mimetype='application/pdf'
+        )
+    except Exception as e:
+        print(f"❌ PDF error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    
 if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🚀 P6 SCHEDULE ANALYZER - ALL FEATURES READY")

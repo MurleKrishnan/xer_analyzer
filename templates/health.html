@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Schedule Health Analytics - P6 Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <style>
+        .health-hero {
+            background: linear-gradient(135deg, #1e40af, #7c3aed);
+            color: white;
+            padding: 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+        }
+        
+        .standard-selector {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .standard-btns {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+        
+        .std-select-btn {
+            padding: 1rem;
+            background: white;
+            border: 2px solid #cbd5e1;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        
+        .std-select-btn:hover {
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+        }
+        
+        .std-select-btn.active {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            color: white;
+            border-color: #3b82f6;
+        }
+        
+        .std-btn-name {
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+        
+        .std-btn-desc {
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+            opacity: 0.85;
+        }
+        
+        .score-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .std-score-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            border-top: 4px solid;
+            text-align: center;
+        }
+        
+        .std-score-card.green { border-top-color: #10b981; }
+        .std-score-card.blue { border-top-color: #3b82f6; }
+        .std-score-card.orange { border-top-color: #f59e0b; }
+        .std-score-card.red { border-top-color: #dc2626; }
+        
+        .std-score-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        
+        .std-score-grade {
+            display: inline-block;
+            padding: 0.2rem 0.75rem;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+        
+        .grade-A { background: #d1fae5; color: #065f46; }
+        .grade-B { background: #dbeafe; color: #1e40af; }
+        .grade-C { background: #fef3c7; color: #92400e; }
+        .grade-D { background: #fed7aa; color: #9a3412; }
+        .grade-F { background: #fee2e2; color: #991b1b; }
+        
+        .std-score-details {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-top: 0.5rem;
+        }
+        
+        .action-btn-large {
+            padding: 1rem 2rem;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
+        }
+        
+        .action-btn-large:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .btn-pdf {
+            background: #dc2626;
+            color: white;
+        }
+        
+        .btn-executive {
+            background: #059669;
+            color: white;
+        }
+        
+        .category-section {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .category-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .category-stats {
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+        
+        .check-item {
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            border-radius: 8px;
+            border-left: 4px solid;
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+        
+        .check-item.pass { border-left-color: #10b981; background: #f0fdf4; }
+        .check-item.fail { border-left-color: #dc2626; background: #fef2f2; }
+        .check-item.info { border-left-color: #3b82f6; background: #eff6ff; }
+        
+        .check-icon { font-size: 1.5rem; }
+        .check-content { flex: 1; }
+        
+        .check-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .badge {
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        
+        .badge-critical { background: #7f1d1d; color: white; }
+        .badge-high { background: #dc2626; color: white; }
+        .badge-medium { background: #f59e0b; color: white; }
+        .badge-low { background: #64748b; color: white; }
+        .badge-info { background: #3b82f6; color: white; }
+        .badge-std { background: #1e293b; color: white; }
+        
+        .filter-bar {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+        
+        .filter-bar select {
+            padding: 0.5rem;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+        }
+        
+        .top-actions {
+            background: linear-gradient(135deg, #fef3c7, #fed7aa);
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+        }
+        
+        .action-item {
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .action-priority {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #dc2626;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        
+        .recommendation-box {
+            background: #fffbeb;
+            border-left: 3px solid #f59e0b;
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-content">
+            <div class="logo-section">
+                <span class="logo-icon">🏥</span>
+                <div>
+                    <h1>Schedule Health Analytics</h1>
+                    <p class="subtitle">622+ Metrics | DCMA | DOE | NASA | GAO | AACE | Industry</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
+                <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-main">
+        
+        <!-- Standard Selector -->
+        <div class="standard-selector">
+            <h3>📋 Select Assessment Standard</h3>
+            <p style="color:#64748b; margin-bottom:0.5rem;">
+                Choose a specific standard for focused analysis, or run all 622+ checks together.
+            </p>
+            
+            <div class="standard-btns">
+                <div class="std-select-btn active" data-std="all" onclick="selectStandard('all')">
+                    <div class="std-btn-name">🎯 All Standards</div>
+                    <div class="std-btn-desc">Comprehensive analysis</div>
+                </div>
+                <div class="std-select-btn" data-std="DCMA" onclick="selectStandard('DCMA')">
+                    <div class="std-btn-name">DCMA</div>
+                    <div class="std-btn-desc">14-Point + Sub-metrics</div>
+                </div>
+                <div class="std-select-btn" data-std="DOE" onclick="selectStandard('DOE')">
+                    <div class="std-btn-name">DOE</div>
+                    <div class="std-btn-desc">PM-30 Assessment</div>
+                </div>
+                <div class="std-select-btn" data-std="NASA" onclick="selectStandard('NASA')">
+                    <div class="std-btn-name">NASA</div>
+                    <div class="std-btn-desc">NPR 7120.5 & Handbook</div>
+                </div>
+                <div class="std-select-btn" data-std="GAO" onclick="selectStandard('GAO')">
+                    <div class="std-btn-name">GAO</div>
+                    <div class="std-btn-desc">10 Best Practices</div>
+                </div>
+                <div class="std-select-btn" data-std="AACE" onclick="selectStandard('AACE')">
+                    <div class="std-btn-name">AACE</div>
+                    <div class="std-btn-desc">RP 29R/32R/37R</div>
+                </div>
+                <div class="std-select-btn" data-std="Industry" onclick="selectStandard('Industry')">
+                    <div class="std-btn-name">Industry</div>
+                    <div class="std-btn-desc">PMI, CII, ISO</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loadingMessage" style="text-align:center; padding:3rem;">
+            <div class="spinner"></div>
+            <p style="margin-top:1rem;">Running comprehensive health assessment...</p>
+        </div>
+
+        <!-- Results -->
+        <div id="healthContent" style="display:none;">
+            
+            <!-- Overall Score Hero -->
+            <div class="health-hero">
+                <div style="display:flex; gap:2rem; align-items:center; flex-wrap:wrap;">
+                    <div style="text-align:center;">
+                        <div style="font-size:4rem; font-weight:700; line-height:1;" id="overallScore">--</div>
+                        <div style="font-size:0.9rem; opacity:0.9;">Overall Health Score</div>
+                    </div>
+                    
+                    <div style="flex:1;">
+                        <h2 id="reportTitle" style="margin-bottom:0.5rem;">Comprehensive Assessment</h2>
+                        <p style="opacity:0.9; margin-bottom:1rem;" id="reportSubtitle">
+                            Analysis based on all applicable standards
+                        </p>
+                        
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:1rem;">
+                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
+                                <div style="font-size:1.5rem; font-weight:700;" id="totalChecks">0</div>
+                                <div style="font-size:0.75rem;">Total Checks</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
+                                <div style="font-size:1.5rem; font-weight:700; color:#86efac;" id="passedChecks">0</div>
+                                <div style="font-size:0.75rem;">Passed</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
+                                <div style="font-size:1.5rem; font-weight:700; color:#fca5a5;" id="failedChecks">0</div>
+                                <div style="font-size:0.75rem;">Failed</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
+                                <div style="font-size:1.5rem; font-weight:700; color:#fca5a5;" id="criticalFailures">0</div>
+                                <div style="font-size:0.75rem;">Critical</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="display:flex; flex-direction:column; gap:0.75rem;">
+                        <button class="action-btn-large btn-pdf" onclick="downloadPDF()">
+                            📄 Executive PDF
+                        </button>
+                        <button class="action-btn-large btn-executive" onclick="downloadActionsPDF()">
+                            📋 Action List PDF
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Standards Scorecards -->
+            <div id="standardsScorecards">
+                <h3 style="margin-bottom:1rem;">📊 Standards Compliance Scores</h3>
+                <div class="score-grid" id="scoreGrid"></div>
+            </div>
+
+            <!-- Top Actions -->
+            <div class="top-actions" id="topActionsSection">
+                <h3 style="margin-bottom:1rem;">🎯 Top Priority Actions</h3>
+                <div id="topActionsList"></div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="filter-bar">
+                <label>
+                    Status: 
+                    <select id="filterStatus" onchange="applyFilter()">
+                        <option value="all">All</option>
+                        <option value="fail">Failed Only</option>
+                        <option value="pass">Passed Only</option>
+                    </select>
+                </label>
+                <label>
+                    Severity: 
+                    <select id="filterSeverity" onchange="applyFilter()">
+                        <option value="all">All Severities</option>
+                        <option value="critical">Critical Only</option>
+                        <option value="high">High+</option>
+                        <option value="medium">Medium+</option>
+                    </select>
+                </label>
+                <label>
+                    Search: 
+                    <input type="text" id="filterSearch" oninput="applyFilter()" 
+                           placeholder="Search checks..." 
+                           style="padding:0.5rem; border-radius:6px; border:1px solid #cbd5e1;">
+                </label>
+            </div>
+
+            <!-- Detailed Results -->
+            <div id="detailedResults"></div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='health.js') }}"></script>
+</body>
+</html>
