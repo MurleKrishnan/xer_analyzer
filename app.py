@@ -7,7 +7,7 @@ Integrates:
 - Schedule Comparison (Baseline vs Current)
 - EVM & S-Curves
 - Advanced Health Analytics (622+ checks across 6 standards)
-- PDF Reports (Executive + Action List)
+- PDF Reports (Executive + Action List) with severity filter
 - Excel Export (Top Actions with severity filter, one sheet per standard)
 """
 
@@ -367,7 +367,7 @@ def get_health_data():
 
 
 # ════════════════════════════════════════════
-# ROUTE 6: PDF REPORTS
+# ROUTE 6: PDF REPORTS (with severity filter)
 # ════════════════════════════════════════════
 
 @app.route('/api/executive-pdf')
@@ -380,18 +380,23 @@ def download_executive_pdf():
         return jsonify({'error': 'PDF or Health engine module missing!'}), 500
 
     selected_standard = request.args.get('standard', 'all')
+    severity_filter = request.args.get('severity', 'all')
 
     try:
         health = AdvancedHealthEngine(current_analysis['engine'])
         results = health.run_all_checks(selected_standard=selected_standard)
 
-        generator = PDFReportGenerator(results, current_analysis['file_name'])
+        generator = PDFReportGenerator(
+            results,
+            current_analysis['file_name'],
+            severity_filter=severity_filter
+        )
         pdf_buffer = generator.generate_executive_report()
 
         return send_file(
             pdf_buffer,
             as_attachment=True,
-            download_name=f"executive_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            download_name=f"executive_report_{selected_standard}_{severity_filter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
             mimetype='application/pdf'
         )
     except Exception as e:
@@ -411,18 +416,23 @@ def download_actions_pdf():
         return jsonify({'error': 'PDF or Health engine module missing!'}), 500
 
     selected_standard = request.args.get('standard', 'all')
+    severity_filter = request.args.get('severity', 'all')
 
     try:
         health = AdvancedHealthEngine(current_analysis['engine'])
         results = health.run_all_checks(selected_standard=selected_standard)
 
-        generator = PDFReportGenerator(results, current_analysis['file_name'])
+        generator = PDFReportGenerator(
+            results,
+            current_analysis['file_name'],
+            severity_filter=severity_filter
+        )
         pdf_buffer = generator.generate_actions_report()
 
         return send_file(
             pdf_buffer,
             as_attachment=True,
-            download_name=f"action_list_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            download_name=f"action_list_{selected_standard}_{severity_filter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
             mimetype='application/pdf'
         )
     except Exception as e:

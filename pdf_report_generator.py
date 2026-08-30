@@ -4,6 +4,10 @@ PDF EXECUTIVE REPORT GENERATOR
 Generates professional PDF reports for:
 1. Executive Summary Report
 2. Failed Check Action List
+
+Supports:
+- Standard filter (DCMA/DOE/NASA/GAO/AACE/Industry/all)
+- Severity filter (all/critical/high/medium)
 """
 
 from reportlab.lib.pagesizes import A4
@@ -19,12 +23,25 @@ from datetime import datetime
 import io
 
 
+# Severity filter helper
+SEVERITY_LEVELS = {
+    'critical': ['critical'],
+    'high': ['critical', 'high'],
+    'medium': ['critical', 'high', 'medium'],
+    'all': ['critical', 'high', 'medium', 'low', 'info']
+}
+
+
 class PDFReportGenerator:
     """Generates professional PDF reports from health analysis data."""
 
-    def __init__(self, health_data, file_name=''):
+    def __init__(self, health_data, file_name='', severity_filter='all'):
         self.data = health_data
         self.file_name = file_name
+        self.severity_filter = (severity_filter or 'all').lower()
+        self.allowed_severities = SEVERITY_LEVELS.get(
+            self.severity_filter, SEVERITY_LEVELS['all']
+        )
         self.styles = self._create_styles()
 
     def _create_styles(self):
@@ -121,8 +138,13 @@ class PDFReportGenerator:
         ]))
         return table
 
+    def _matches_severity(self, check_or_action):
+        """Check if item matches the severity filter."""
+        sev = (check_or_action.get('severity') or 'low').lower()
+        return sev in self.allowed_severities
+
     def generate_executive_report(self):
-        """Create the executive summary PDF."""
+        """Create the executive summary PDF (respects severity filter)."""
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
@@ -143,6 +165,10 @@ class PDFReportGenerator:
         ))
         story.append(Paragraph(
             f"<b>Analysis Date:</b> {self.data.get('analysis_date', datetime.now().strftime('%Y-%m-%d %H:%M'))}",
+            self.styles['CheckBody']
+        ))
+        story.append(Paragraph(
+            f"<b>Severity Filter:</b> {self.severity_filter.upper()}",
             self.styles['CheckBody']
         ))
 
@@ -170,6 +196,7 @@ class PDFReportGenerator:
 
         story.append(Spacer(1, 0.5 * cm))
 
+        # Summary Stats
         stats_data = [
             ['Metric', 'Value'],
             ['Total Checks Performed', str(self.data.get('total_checks', 0))],
@@ -177,6 +204,7 @@ class PDFReportGenerator:
             ['Checks Failed', str(self.data.get('failed_checks', 0))],
             ['Critical Failures', str(self.data.get('critical_failures', 0))],
             ['High-Severity Failures', str(self.data.get('high_failures', 0))],
+            ['Severity Filter Applied', self.severity_filter.upper()],
         ]
 
         stats_table = Table(stats_data, colWidths=[9 * cm, 7 * cm])
@@ -197,13 +225,14 @@ class PDFReportGenerator:
 
         story.append(PageBreak())
 
+        # ─── Standards Compliance ───
         story.append(Paragraph("STANDARDS COMPLIANCE SUMMARY", self.styles['SectionHeader']))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#1e40af')))
         story.append(Spacer(1, 0.5 * cm))
 
-        std_data = [['Standard', 'Score', 'Grade', 'Passed', 'Failed', 'Critical']]
+        std_data_rows = [['Standard', 'Score', 'Grade', 'Passed', 'Failed', 'Critical']]
         for std_name, std_score in self.data.get('standard_scores', {}).items():
-            std_data.append([
+            std_data_rows.append([
                 std_name,
                 f"{std_score.get('score', 0)}",
                 std_score.get('grade', '-'),
@@ -212,7 +241,7 @@ class PDFReportGenerator:
                 str(std_score.get('critical_failures', 0)),
             ])
 
-        std_table = Table(std_data, colWidths=[4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm])
+        std_table = Table(std_data_rows, colWidths=[4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm])
         std_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -230,52 +259,65 @@ class PDFReportGenerator:
 
         story.append(Spacer(1, 0.8 * cm))
 
-        story.append(Paragraph("TOP PRIORITY ACTIONS", self.styles['SectionHeader']))
+        # ─── Top Priority Actions (filtered) ───
+        story.append(Paragraph(
+            f"TOP PRIORITY ACTIONS (Severity: {self.severity_filter.upper()})",
+            self.styles['SectionHeader']
+        ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#dc2626')))
         story.append(Spacer(1, 0.3 * cm))
 
-        top_actions = self.data.get('top_actions', [])[:10]
-        for idx, action in enumerate(top_actions, 1):
-            severity = (action.get('severity') or 'low').upper()
-            severity_color = {
-                'CRITICAL': '#7f1d1d',
-                'HIGH': '#dc2626',
-                'MEDIUM': '#f59e0b',
-                'LOW': '#64748b'
-            }.get(severity, '#64748b')
+        top_actions = self.data.get('top_actions', []) or []
+        filtered_actions = [a for a in top_actions if self._matches_severity(a)][:10]
 
-            action_text = (
-                f"<b>{idx}. [{action.get('id', '')}] {action.get('name', '')}</b><br/>"
-                f"<font size='9' color='#64748b'>"
-                f"Standard: {action.get('standard', '')} | "
-                f"Severity: <font color='{severity_color}'><b>{severity}</b></font> | "
-                f"Affected: {action.get('count', 0)} activities ({action.get('percentage', 0)}%)"
-                f"</font>"
-            )
-            story.append(Paragraph(action_text, self.styles['CheckBody']))
+        if not filtered_actions:
+            story.append(Paragraph(
+                f"<i>No actions found matching severity filter: {self.severity_filter.upper()}</i>",
+                self.styles['CheckBody']
+            ))
+        else:
+            for idx, action in enumerate(filtered_actions, 1):
+                severity = (action.get('severity') or 'low').upper()
+                severity_color = {
+                    'CRITICAL': '#7f1d1d',
+                    'HIGH': '#dc2626',
+                    'MEDIUM': '#f59e0b',
+                    'LOW': '#64748b'
+                }.get(severity, '#64748b')
 
-            if action.get('recommendation'):
-                story.append(Spacer(1, 0.1 * cm))
-                story.append(self._recommendation_box(action.get('recommendation')))
+                action_text = (
+                    f"<b>{idx}. [{action.get('id', '')}] {action.get('name', '')}</b><br/>"
+                    f"<font size='9' color='#64748b'>"
+                    f"Standard: {action.get('standard', '')} | "
+                    f"Severity: <font color='{severity_color}'><b>{severity}</b></font> | "
+                    f"Affected: {action.get('count', 0)} activities ({action.get('percentage', 0)}%)"
+                    f"</font>"
+                )
+                story.append(Paragraph(action_text, self.styles['CheckBody']))
 
-            failed_items = action.get('failed_items', []) or []
-            if failed_items:
-                story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
-                for item in failed_items[:10]:
-                    code = item.get('code', '')
-                    name = item.get('name', '')
-                    wbs = item.get('wbs', '')
-                    line = f"• {code}"
-                    if name:
-                        line += f" - {name}"
-                    if wbs:
-                        line += f" ({wbs})"
-                    story.append(Paragraph(line, self.styles['CheckBody']))
+                if action.get('recommendation'):
+                    story.append(Spacer(1, 0.1 * cm))
+                    story.append(self._recommendation_box(action.get('recommendation')))
 
-            story.append(Spacer(1, 0.3 * cm))
+                failed_items = action.get('failed_items', []) or []
+                if failed_items:
+                    story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
+                    for item in failed_items[:10]:
+                        code = item.get('code', '')
+                        name = item.get('name', '')
+                        wbs = item.get('wbs', '')
+                        line = f"• {code}"
+                        if name:
+                            line += f" - {name}"
+                        if wbs:
+                            line += f" ({wbs})"
+                        story.append(Paragraph(line, self.styles['CheckBody']))
+
+                story.append(Spacer(1, 0.3 * cm))
 
         story.append(PageBreak())
 
+        # ─── Detailed Standards Summary (filtered) ───
         story.append(Paragraph("DETAILED STANDARDS SUMMARY", self.styles['SectionHeader']))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#1e40af')))
         story.append(Spacer(1, 0.5 * cm))
@@ -297,7 +339,11 @@ class PDFReportGenerator:
                     self.styles['CheckBody']
                 ))
 
-                failed_checks = [c for c in category.get('checks', []) if c.get('status') == 'fail']
+                # Apply severity filter to failed checks
+                failed_checks = [
+                    c for c in category.get('checks', [])
+                    if c.get('status') == 'fail' and self._matches_severity(c)
+                ]
                 if failed_checks:
                     for check in failed_checks[:5]:
                         story.append(Paragraph(
@@ -318,11 +364,7 @@ class PDFReportGenerator:
         return buffer
 
     def generate_actions_report(self):
-        """
-        Create the detailed action list PDF.
-        Includes Top Priority Actions with affected activities
-        + Full failed check listing per Standard.
-        """
+        """Create the detailed action list PDF (respects severity filter)."""
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
@@ -338,14 +380,20 @@ class PDFReportGenerator:
             f"<i>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | File: {self.file_name}</i>",
             self.styles['CheckBody']
         ))
+        story.append(Paragraph(
+            f"<b>Severity Filter:</b> {self.severity_filter.upper()}",
+            self.styles['CheckBody']
+        ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#dc2626')))
         story.append(Spacer(1, 0.5 * cm))
 
+        # ─── Summary Box ───
         summary_data = [
             ['Total Failed Checks', str(self.data.get('failed_checks', 0))],
             ['Critical Failures', str(self.data.get('critical_failures', 0))],
             ['High Severity Failures', str(self.data.get('high_failures', 0))],
             ['Overall Health Score', f"{self.data.get('overall_score', 0)} / 100"],
+            ['Severity Filter', self.severity_filter.upper()],
         ]
 
         summary_table = Table(summary_data, colWidths=[9 * cm, 7 * cm])
@@ -362,23 +410,26 @@ class PDFReportGenerator:
         story.append(summary_table)
         story.append(Spacer(1, 0.8 * cm))
 
-        # TOP PRIORITY ACTIONS
+        # ═══════════════════════════════════════════════════
+        # TOP PRIORITY ACTIONS (with Affected Activities)
+        # ═══════════════════════════════════════════════════
         story.append(Paragraph(
-            "TOP PRIORITY ACTIONS (WITH AFFECTED ACTIVITIES)",
+            f"TOP PRIORITY ACTIONS (Severity: {self.severity_filter.upper()})",
             self.styles['SectionHeader']
         ))
         story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#dc2626')))
         story.append(Spacer(1, 0.3 * cm))
 
-        top_actions = self.data.get('top_actions', [])[:15]
+        top_actions = self.data.get('top_actions', []) or []
+        filtered_top = [a for a in top_actions if self._matches_severity(a)][:15]
 
-        if not top_actions:
+        if not filtered_top:
             story.append(Paragraph(
-                "No failed priority actions found.",
+                f"<i>No priority actions matched severity filter: {self.severity_filter.upper()}</i>",
                 self.styles['CheckBody']
             ))
         else:
-            for idx, action in enumerate(top_actions, 1):
+            for idx, action in enumerate(filtered_top, 1):
                 severity = (action.get('severity') or 'low').upper()
                 severity_color = {
                     'CRITICAL': '#7f1d1d',
@@ -423,7 +474,7 @@ class PDFReportGenerator:
                 if failed_items:
                     story.append(Spacer(1, 0.15 * cm))
                     story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
-                    for item in failed_items[:15]:
+                    for item in failed_items:
                         code = item.get('code', '')
                         name = item.get('name', '')
                         wbs = item.get('wbs', '')
@@ -443,21 +494,31 @@ class PDFReportGenerator:
 
         story.append(PageBreak())
 
-        # DETAILED FAILED CHECKS
+        # ═══════════════════════════════════════════════════
+        # DETAILED FAILED CHECKS PER STANDARD (filtered)
+        # ═══════════════════════════════════════════════════
         story.append(Paragraph(
-            "DETAILED FAILED CHECKS & RECOMMENDATIONS",
+            f"DETAILED FAILED CHECKS & RECOMMENDATIONS (Severity: {self.severity_filter.upper()})",
             self.styles['SectionHeader']
         ))
 
+        any_failures_found = False
+
         for std_name, std_data in self.data.get('standards', {}).items():
+            # Apply severity filter
             failed_in_std = []
             for cat in std_data.get('categories', []):
                 for check in cat.get('checks', []):
-                    if check.get('status') == 'fail':
-                        failed_in_std.append((cat.get('name', ''), check))
+                    if check.get('status') != 'fail':
+                        continue
+                    if not self._matches_severity(check):
+                        continue
+                    failed_in_std.append((cat.get('name', ''), check))
 
             if not failed_in_std:
                 continue
+
+            any_failures_found = True
 
             story.append(Spacer(1, 0.4 * cm))
             story.append(Paragraph(
@@ -506,7 +567,7 @@ class PDFReportGenerator:
                 if check.get('failed_items'):
                     story.append(Spacer(1, 0.1 * cm))
                     story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
-                    for item in check.get('failed_items', [])[:15]:
+                    for item in check.get('failed_items', []):
                         code = item.get('code', '')
                         name = item.get('name', '')
                         wbs = item.get('wbs', '')
@@ -518,6 +579,12 @@ class PDFReportGenerator:
                         story.append(Paragraph(line, self.styles['CheckBody']))
 
                 story.append(Spacer(1, 0.35 * cm))
+
+        if not any_failures_found:
+            story.append(Paragraph(
+                f"<i>No failures matched severity filter: {self.severity_filter.upper()}</i>",
+                self.styles['CheckBody']
+            ))
 
         story.append(Spacer(1, 1 * cm))
         story.append(Paragraph(

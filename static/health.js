@@ -5,7 +5,10 @@
     - Full affected activity lists (scrollable)
     - Multi-standard filtering
     - Top priority actions with expandable activity lists
-    - Excel export with severity filter (All / Critical / High / Medium)
+    - Severity filter applied to all exports:
+        * Executive PDF
+        * Action List PDF
+        * Excel Export
 */
 
 let healthData = null;
@@ -292,23 +295,31 @@ function applyFilter() {
 }
 
 // ═══════════════════════════════════════════
-// EXPORT / DOWNLOAD ACTIONS
+// EXPORT / DOWNLOAD ACTIONS (with severity filter)
 // ═══════════════════════════════════════════
 
+function getSelectedSeverity() {
+    const sevEl = document.getElementById('excelSeverityFilter');
+    return sevEl ? sevEl.value : 'all';
+}
+
 function downloadPDF() {
-    window.location.href = `/api/executive-pdf?standard=${currentStandard}`;
+    // Executive PDF - respects severity filter
+    const severity = getSelectedSeverity();
+    window.location.href =
+        `/api/executive-pdf?standard=${currentStandard}&severity=${severity}`;
 }
 
 function downloadActionsPDF() {
-    window.location.href = `/api/actions-pdf?standard=${currentStandard}`;
+    // Action List PDF - respects severity filter
+    const severity = getSelectedSeverity();
+    window.location.href =
+        `/api/actions-pdf?standard=${currentStandard}&severity=${severity}`;
 }
 
 function downloadActionsExcel() {
-    // Read severity filter from dropdown
-    const sevEl = document.getElementById('excelSeverityFilter');
-    const severity = sevEl ? sevEl.value : 'all';
-
-    // Build query with standard + severity
+    // Excel export - respects severity filter
+    const severity = getSelectedSeverity();
     window.location.href =
         `/api/actions-excel?standard=${currentStandard}&severity=${severity}`;
 }
