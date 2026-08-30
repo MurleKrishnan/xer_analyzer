@@ -23,26 +23,34 @@ from parser import XERParser
 from data_engine import ScheduleEngine
 from reports import ReportGenerator
 
-# ─── ADVANCED MODULE IMPORTS (Safe Imports) ───
+# ─── ADVANCED MODULE IMPORTS (With Detailed Logging) ───
 try:
     from comparison_engine import ScheduleComparator
-except ImportError:
+    print("✅ ScheduleComparator imported")
+except Exception as e:
     ScheduleComparator = None
+    print(f"❌ ScheduleComparator import failed: {e}")
 
 try:
     from evm_engine import EVMEngine
-except ImportError:
+    print("✅ EVMEngine imported")
+except Exception as e:
     EVMEngine = None
+    print(f"❌ EVMEngine import failed: {e}")
 
 try:
     from advanced_health_engine import AdvancedHealthEngine
-except ImportError:
+    print("✅ AdvancedHealthEngine imported")
+except Exception as e:
     AdvancedHealthEngine = None
+    print(f"❌ AdvancedHealthEngine import failed: {e}")
 
 try:
     from pdf_report_generator import PDFReportGenerator
-except ImportError:
+    print("✅ PDFReportGenerator imported")
+except Exception as e:
     PDFReportGenerator = None
+    print(f"❌ PDFReportGenerator import failed: {e}")
 
 try:
     from config import get_config
@@ -377,7 +385,11 @@ def download_executive_pdf():
         return jsonify({'error': 'No data loaded'}), 400
 
     if PDFReportGenerator is None or AdvancedHealthEngine is None:
-        return jsonify({'error': 'PDF or Health engine module missing!'}), 500
+        return jsonify({
+            'error': 'PDF or Health engine module missing!',
+            'pdf_loaded': PDFReportGenerator is not None,
+            'health_loaded': AdvancedHealthEngine is not None
+        }), 500
 
     selected_standard = request.args.get('standard', 'all')
     severity_filter = request.args.get('severity', 'all')
@@ -413,7 +425,11 @@ def download_actions_pdf():
         return jsonify({'error': 'No data loaded'}), 400
 
     if PDFReportGenerator is None or AdvancedHealthEngine is None:
-        return jsonify({'error': 'PDF or Health engine module missing!'}), 500
+        return jsonify({
+            'error': 'PDF or Health engine module missing!',
+            'pdf_loaded': PDFReportGenerator is not None,
+            'health_loaded': AdvancedHealthEngine is not None
+        }), 500
 
     selected_standard = request.args.get('standard', 'all')
     severity_filter = request.args.get('severity', 'all')
@@ -444,14 +460,13 @@ def download_actions_pdf():
 
 # ════════════════════════════════════════════
 # ROUTE 7: TOP ACTIONS EXCEL EXPORT
-# One sheet per Standard + Severity Filter + Separators
 # ════════════════════════════════════════════
 
 @app.route('/api/actions-excel')
 def download_actions_excel():
     """
     Export Top Actions + full affected activities to Excel.
-    - One sheet per Standard (DCMA, DOE, NASA, GAO, AACE, Industry)
+    - One sheet per Standard
     - Filter by severity (all / critical / high / medium)
     - Empty rows between metrics for clear separation
     """
@@ -464,7 +479,6 @@ def download_actions_excel():
     selected_standard = request.args.get('standard', 'all')
     severity_filter = request.args.get('severity', 'all').lower()
 
-    # Severity filter definitions
     severity_levels = {
         'critical': ['critical'],
         'high': ['critical', 'high'],
@@ -484,7 +498,6 @@ def download_actions_excel():
         top_actions = results.get('top_actions', []) or []
         standards_data = results.get('standards', {}) or {}
 
-        # Apply severity filter to top actions
         filtered_top_actions = [
             a for a in top_actions
             if (a.get('severity') or 'low').lower() in allowed_severities
@@ -509,7 +522,7 @@ def download_actions_excel():
             ['Filtered Actions Count', len(filtered_top_actions)],
         ]
 
-        # ─── Sheet 2: Top Actions Summary (filtered) ───
+        # ─── Sheet 2: Top Actions Summary ───
         top_summary_rows = []
         for idx, action in enumerate(filtered_top_actions, 1):
             top_summary_rows.append({
@@ -528,28 +541,21 @@ def download_actions_excel():
                 'Description': action.get('description', ''),
             })
 
-        # ─── Build workbook ───
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-
-            # Sheet: Report Info
             pd.DataFrame(meta_rows, columns=['Field', 'Value']).to_excel(
                 writer, sheet_name='Report Info', index=False
             )
 
-            # Sheet: Top Actions Summary
             if top_summary_rows:
                 pd.DataFrame(top_summary_rows).to_excel(
                     writer, sheet_name='Top Actions Summary', index=False
                 )
             else:
-                pd.DataFrame([{
-                    'Info': f'No actions matched severity filter: {severity_filter.upper()}'
-                }]).to_excel(
+                pd.DataFrame([{'Info': f'No actions matched severity filter: {severity_filter.upper()}'}]).to_excel(
                     writer, sheet_name='Top Actions Summary', index=False
                 )
 
-            # ─── One sheet per Standard (filtered by severity) ───
             for std_name, std_data in standards_data.items():
                 sheet_name = (std_name or 'Standard')[:31]
                 rows = []
@@ -559,7 +565,6 @@ def download_actions_excel():
                     for check in category.get('checks', []):
                         if check.get('status') != 'fail':
                             continue
-                        # Apply severity filter
                         if (check.get('severity') or 'low').lower() not in allowed_severities:
                             continue
                         failed_in_std.append((category.get('name', ''), check))
@@ -575,126 +580,77 @@ def download_actions_excel():
                     })
                 else:
                     for cat_name, check in failed_in_std:
-                        # Metric header rows
                         rows.append({
                             'Section': 'METRIC',
                             'Field': 'Check ID',
                             'Value': check.get('id', ''),
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
                         rows.append({
-                            'Section': '',
-                            'Field': 'Check Name',
-                            'Value': check.get('name', ''),
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Section': '', 'Field': 'Check Name', 'Value': check.get('name', ''),
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
                         rows.append({
-                            'Section': '',
-                            'Field': 'Category',
-                            'Value': cat_name,
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Section': '', 'Field': 'Category', 'Value': cat_name,
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
                         rows.append({
-                            'Section': '',
-                            'Field': 'Severity',
-                            'Value': (check.get('severity') or '').upper(),
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Section': '', 'Field': 'Severity', 'Value': (check.get('severity') or '').upper(),
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
                         rows.append({
-                            'Section': '',
-                            'Field': 'Description',
-                            'Value': check.get('description', ''),
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Section': '', 'Field': 'Description', 'Value': check.get('description', ''),
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
                         rows.append({
-                            'Section': '',
-                            'Field': 'Threshold',
-                            'Value': check.get('threshold', ''),
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Section': '', 'Field': 'Threshold', 'Value': check.get('threshold', ''),
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
 
                         if check.get('count') is not None:
                             rows.append({
-                                'Section': '',
-                                'Field': 'Affected',
+                                'Section': '', 'Field': 'Affected',
                                 'Value': f"{check.get('count', 0)} of {check.get('total', 0)} ({check.get('percentage', 0)}%)",
-                                'Activity ID': '',
-                                'Activity Name': '',
-                                'WBS': '',
+                                'Activity ID': '', 'Activity Name': '', 'WBS': '',
                             })
                         if check.get('value') is not None and check.get('value') != '':
                             rows.append({
-                                'Section': '',
-                                'Field': 'Value',
-                                'Value': check.get('value', ''),
-                                'Activity ID': '',
-                                'Activity Name': '',
-                                'WBS': '',
+                                'Section': '', 'Field': 'Value', 'Value': check.get('value', ''),
+                                'Activity ID': '', 'Activity Name': '', 'WBS': '',
                             })
 
                         rows.append({
-                            'Section': '',
-                            'Field': 'Recommendation',
-                            'Value': check.get('recommendation', ''),
-                            'Activity ID': '',
-                            'Activity Name': '',
-                            'WBS': '',
+                            'Section': '', 'Field': 'Recommendation', 'Value': check.get('recommendation', ''),
+                            'Activity ID': '', 'Activity Name': '', 'WBS': '',
                         })
 
-                        # Affected Activities Sub-Header
                         items = check.get('failed_items', []) or []
                         rows.append({
-                            'Section': 'AFFECTED ACTIVITIES',
-                            'Field': f'Total: {len(items)}',
-                            'Value': '',
-                            'Activity ID': 'Activity ID',
-                            'Activity Name': 'Activity Name',
-                            'WBS': 'WBS',
+                            'Section': 'AFFECTED ACTIVITIES', 'Field': f'Total: {len(items)}', 'Value': '',
+                            'Activity ID': 'Activity ID', 'Activity Name': 'Activity Name', 'WBS': 'WBS',
                         })
 
                         if items:
                             for item in items:
                                 rows.append({
-                                    'Section': '',
-                                    'Field': '',
-                                    'Value': '',
+                                    'Section': '', 'Field': '', 'Value': '',
                                     'Activity ID': item.get('code', ''),
                                     'Activity Name': item.get('name', ''),
                                     'WBS': item.get('wbs', ''),
                                 })
                         else:
                             rows.append({
-                                'Section': '',
-                                'Field': '',
-                                'Value': '(No activity list available)',
-                                'Activity ID': '',
-                                'Activity Name': '',
-                                'WBS': '',
+                                'Section': '', 'Field': '', 'Value': '(No activity list available)',
+                                'Activity ID': '', 'Activity Name': '', 'WBS': '',
                             })
 
-                        # Empty separator rows between metrics
-                        rows.append({'Section': '', 'Field': '', 'Value': '',
-                                     'Activity ID': '', 'Activity Name': '', 'WBS': ''})
-                        rows.append({'Section': '', 'Field': '', 'Value': '',
-                                     'Activity ID': '', 'Activity Name': '', 'WBS': ''})
+                        rows.append({'Section': '', 'Field': '', 'Value': '', 'Activity ID': '', 'Activity Name': '', 'WBS': ''})
+                        rows.append({'Section': '', 'Field': '', 'Value': '', 'Activity ID': '', 'Activity Name': '', 'WBS': ''})
 
                 pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
-            # ─── Post-process formatting ───
+            # Format Excel
             workbook = writer.book
-
             header_font = Font(bold=True, color='FFFFFF', size=11)
             header_fill = PatternFill(start_color='1E40AF', end_color='1E40AF', fill_type='solid')
             metric_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
@@ -704,14 +660,11 @@ def download_actions_excel():
 
             for sheet_name in workbook.sheetnames:
                 ws = workbook[sheet_name]
-
-                # Header row style
                 for cell in ws[1]:
                     cell.font = header_font
                     cell.fill = header_fill
                     cell.alignment = Alignment(horizontal='left', vertical='center')
 
-                # Auto column widths
                 for col in ws.columns:
                     max_len = 10
                     col_letter = col[0].column_letter
@@ -724,10 +677,8 @@ def download_actions_excel():
                             pass
                     ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
 
-                # Freeze header row
                 ws.freeze_panes = 'A2'
 
-                # Standard sheet highlighting
                 if sheet_name not in ['Report Info', 'Top Actions Summary']:
                     for row in ws.iter_rows(min_row=2):
                         section_cell = row[0]
@@ -743,7 +694,6 @@ def download_actions_excel():
                             c.alignment = wrap_align
 
         output.seek(0)
-
         filename = f"health_top_actions_{selected_standard}_{severity_filter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return send_file(
             output,
