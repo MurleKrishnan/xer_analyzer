@@ -1,8 +1,14 @@
 """
 P6 SCHEDULE ANALYZER - MAIN WEB APPLICATION (app.py)
 =====================================================
-Integrates Dashboard, Gantt, Comparison, EVM, Health,
-PDF reports, and Excel export.
+Integrates:
+- Dashboard (XER parsing, DCMA basics, Excel export)
+- Gantt Chart
+- Schedule Comparison (Baseline vs Current)
+- EVM & S-Curves
+- Advanced Health Analytics (622+ checks across 6 standards)
+- PDF Reports (Executive + Action List)
+- Excel Export (Top Actions with severity filter, one sheet per standard)
 """
 
 from flask import Flask, render_template, request, jsonify, send_file
@@ -427,12 +433,18 @@ def download_actions_pdf():
 
 
 # ════════════════════════════════════════════
-# ROUTE 7: TOP ACTIONS EXCEL EXPORT (NEW)
+# ROUTE 7: TOP ACTIONS EXCEL EXPORT
+# One sheet per Standard + Severity Filter + Separators
 # ════════════════════════════════════════════
 
 @app.route('/api/actions-excel')
 def download_actions_excel():
-    """Export Top Actions + full affected activity lists to Excel."""
+    """
+    Export Top Actions + full affected activities to Excel.
+    - One sheet per Standard (DCMA, DOE, NASA, GAO, AACE, Industry)
+    - Filter by severity (all / critical / high / medium)
+    - Empty rows between metrics for clear separation
+    """
     if current_analysis['engine'] is None:
         return jsonify({'error': 'No data loaded. Upload a file first.'}), 400
 
@@ -440,20 +452,57 @@ def download_actions_excel():
         return jsonify({'error': 'advanced_health_engine.py is missing!'}), 500
 
     selected_standard = request.args.get('standard', 'all')
+    severity_filter = request.args.get('severity', 'all').lower()
+
+    # Severity filter definitions
+    severity_levels = {
+        'critical': ['critical'],
+        'high': ['critical', 'high'],
+        'medium': ['critical', 'high', 'medium'],
+        'all': ['critical', 'high', 'medium', 'low', 'info']
+    }
+    allowed_severities = severity_levels.get(severity_filter, severity_levels['all'])
 
     try:
         import pandas as pd
         from io import BytesIO
+        from openpyxl.styles import Font, PatternFill, Alignment
 
         health = AdvancedHealthEngine(current_analysis['engine'])
         results = health.run_all_checks(selected_standard=selected_standard)
 
         top_actions = results.get('top_actions', []) or []
+        standards_data = results.get('standards', {}) or {}
 
-        # ─── Sheet 1: Top Actions Summary ───
-        summary_rows = []
-        for idx, action in enumerate(top_actions, 1):
-            summary_rows.append({
+        # Apply severity filter to top actions
+        filtered_top_actions = [
+            a for a in top_actions
+            if (a.get('severity') or 'low').lower() in allowed_severities
+        ]
+
+        # ─── Sheet 1: Report Info ───
+        meta_rows = [
+            ['Report Type', 'Schedule Health - Top Actions Export'],
+            ['Selected Standard', selected_standard],
+            ['Severity Filter', severity_filter.upper()],
+            ['File Name', current_analysis.get('file_name', '')],
+            ['Generated At', results.get('analysis_date', '')],
+            ['', ''],
+            ['Overall Score', results.get('overall_score', '')],
+            ['Total Checks', results.get('total_checks', '')],
+            ['Passed Checks', results.get('passed_checks', '')],
+            ['Failed Checks', results.get('failed_checks', '')],
+            ['Critical Failures', results.get('critical_failures', '')],
+            ['High Failures', results.get('high_failures', '')],
+            ['Pass Rate (%)', results.get('pass_rate', '')],
+            ['', ''],
+            ['Filtered Actions Count', len(filtered_top_actions)],
+        ]
+
+        # ─── Sheet 2: Top Actions Summary (filtered) ───
+        top_summary_rows = []
+        for idx, action in enumerate(filtered_top_actions, 1):
+            top_summary_rows.append({
                 'Rank': idx,
                 'Standard': action.get('standard', ''),
                 'Check ID': action.get('id', ''),
@@ -469,107 +518,223 @@ def download_actions_excel():
                 'Description': action.get('description', ''),
             })
 
-        # ─── Sheet 2: Full Affected Activities per Top Action ───
-        detail_rows = []
-        for idx, action in enumerate(top_actions, 1):
-            items = action.get('failed_items', []) or []
-            if not items:
-                detail_rows.append({
-                    'Rank': idx,
-                    'Standard': action.get('standard', ''),
-                    'Check ID': action.get('id', ''),
-                    'Check Name': action.get('name', ''),
-                    'Severity': (action.get('severity') or '').upper(),
-                    'Activity ID': '',
-                    'Activity Name': '',
-                    'WBS': '',
-                    'Extra Value': '',
-                    'Recommendation': action.get('recommendation', ''),
-                })
+        # ─── Build workbook ───
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+
+            # Sheet: Report Info
+            pd.DataFrame(meta_rows, columns=['Field', 'Value']).to_excel(
+                writer, sheet_name='Report Info', index=False
+            )
+
+            # Sheet: Top Actions Summary
+            if top_summary_rows:
+                pd.DataFrame(top_summary_rows).to_excel(
+                    writer, sheet_name='Top Actions Summary', index=False
+                )
             else:
-                for item in items:
-                    detail_rows.append({
-                        'Rank': idx,
-                        'Standard': action.get('standard', ''),
-                        'Check ID': action.get('id', ''),
-                        'Check Name': action.get('name', ''),
-                        'Severity': (action.get('severity') or '').upper(),
-                        'Activity ID': item.get('code', ''),
-                        'Activity Name': item.get('name', ''),
-                        'WBS': item.get('wbs', ''),
-                        'Extra Value': item.get('value', ''),
-                        'Recommendation': action.get('recommendation', ''),
+                pd.DataFrame([{
+                    'Info': f'No actions matched severity filter: {severity_filter.upper()}'
+                }]).to_excel(
+                    writer, sheet_name='Top Actions Summary', index=False
+                )
+
+            # ─── One sheet per Standard (filtered by severity) ───
+            for std_name, std_data in standards_data.items():
+                sheet_name = (std_name or 'Standard')[:31]
+                rows = []
+
+                failed_in_std = []
+                for category in std_data.get('categories', []):
+                    for check in category.get('checks', []):
+                        if check.get('status') != 'fail':
+                            continue
+                        # Apply severity filter
+                        if (check.get('severity') or 'low').lower() not in allowed_severities:
+                            continue
+                        failed_in_std.append((category.get('name', ''), check))
+
+                if not failed_in_std:
+                    rows.append({
+                        'Section': 'No Matching Failures',
+                        'Field': '',
+                        'Value': f'No {severity_filter.upper()} failures found for {std_name}',
+                        'Activity ID': '',
+                        'Activity Name': '',
+                        'WBS': '',
                     })
-
-        # ─── Sheet 3: All Failed Checks + Activities ───
-        all_failed_rows = []
-        for std_name, std_data in (results.get('standards', {}) or {}).items():
-            for category in std_data.get('categories', []):
-                for check in category.get('checks', []):
-                    if check.get('status') != 'fail':
-                        continue
-
-                    items = check.get('failed_items', []) or []
-                    base = {
-                        'Standard': std_name,
-                        'Category': category.get('name', ''),
-                        'Check ID': check.get('id', ''),
-                        'Check Name': check.get('name', ''),
-                        'Severity': (check.get('severity') or '').upper(),
-                        'Count': check.get('count', 0),
-                        'Total': check.get('total', 0),
-                        'Percentage': check.get('percentage', 0),
-                        'Threshold': check.get('threshold', ''),
-                        'Value': check.get('value', ''),
-                        'Recommendation': check.get('recommendation', ''),
-                    }
-
-                    if not items:
-                        all_failed_rows.append({
-                            **base,
+                else:
+                    for cat_name, check in failed_in_std:
+                        # Metric header rows
+                        rows.append({
+                            'Section': 'METRIC',
+                            'Field': 'Check ID',
+                            'Value': check.get('id', ''),
                             'Activity ID': '',
                             'Activity Name': '',
                             'WBS': '',
                         })
-                    else:
-                        for item in items:
-                            all_failed_rows.append({
-                                **base,
-                                'Activity ID': item.get('code', ''),
-                                'Activity Name': item.get('name', ''),
-                                'WBS': item.get('wbs', ''),
+                        rows.append({
+                            'Section': '',
+                            'Field': 'Check Name',
+                            'Value': check.get('name', ''),
+                            'Activity ID': '',
+                            'Activity Name': '',
+                            'WBS': '',
+                        })
+                        rows.append({
+                            'Section': '',
+                            'Field': 'Category',
+                            'Value': cat_name,
+                            'Activity ID': '',
+                            'Activity Name': '',
+                            'WBS': '',
+                        })
+                        rows.append({
+                            'Section': '',
+                            'Field': 'Severity',
+                            'Value': (check.get('severity') or '').upper(),
+                            'Activity ID': '',
+                            'Activity Name': '',
+                            'WBS': '',
+                        })
+                        rows.append({
+                            'Section': '',
+                            'Field': 'Description',
+                            'Value': check.get('description', ''),
+                            'Activity ID': '',
+                            'Activity Name': '',
+                            'WBS': '',
+                        })
+                        rows.append({
+                            'Section': '',
+                            'Field': 'Threshold',
+                            'Value': check.get('threshold', ''),
+                            'Activity ID': '',
+                            'Activity Name': '',
+                            'WBS': '',
+                        })
+
+                        if check.get('count') is not None:
+                            rows.append({
+                                'Section': '',
+                                'Field': 'Affected',
+                                'Value': f"{check.get('count', 0)} of {check.get('total', 0)} ({check.get('percentage', 0)}%)",
+                                'Activity ID': '',
+                                'Activity Name': '',
+                                'WBS': '',
+                            })
+                        if check.get('value') is not None and check.get('value') != '':
+                            rows.append({
+                                'Section': '',
+                                'Field': 'Value',
+                                'Value': check.get('value', ''),
+                                'Activity ID': '',
+                                'Activity Name': '',
+                                'WBS': '',
                             })
 
-        # ─── Sheet 4: Report Info ───
-        meta = [{
-            'Selected Standard': selected_standard,
-            'File Name': current_analysis.get('file_name', ''),
-            'Overall Score': results.get('overall_score', ''),
-            'Total Checks': results.get('total_checks', ''),
-            'Failed Checks': results.get('failed_checks', ''),
-            'Critical Failures': results.get('critical_failures', ''),
-            'High Failures': results.get('high_failures', ''),
-            'Pass Rate': results.get('pass_rate', ''),
-            'Generated At': results.get('analysis_date', ''),
-        }]
+                        rows.append({
+                            'Section': '',
+                            'Field': 'Recommendation',
+                            'Value': check.get('recommendation', ''),
+                            'Activity ID': '',
+                            'Activity Name': '',
+                            'WBS': '',
+                        })
 
-        # Build workbook
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            pd.DataFrame(meta).to_excel(writer, sheet_name='Report Info', index=False)
-            pd.DataFrame(summary_rows).to_excel(
-                writer, sheet_name='Top Actions Summary', index=False
-            )
-            pd.DataFrame(detail_rows).to_excel(
-                writer, sheet_name='Top Actions Activities', index=False
-            )
-            pd.DataFrame(all_failed_rows).to_excel(
-                writer, sheet_name='All Failed Activities', index=False
-            )
+                        # Affected Activities Sub-Header
+                        items = check.get('failed_items', []) or []
+                        rows.append({
+                            'Section': 'AFFECTED ACTIVITIES',
+                            'Field': f'Total: {len(items)}',
+                            'Value': '',
+                            'Activity ID': 'Activity ID',
+                            'Activity Name': 'Activity Name',
+                            'WBS': 'WBS',
+                        })
+
+                        if items:
+                            for item in items:
+                                rows.append({
+                                    'Section': '',
+                                    'Field': '',
+                                    'Value': '',
+                                    'Activity ID': item.get('code', ''),
+                                    'Activity Name': item.get('name', ''),
+                                    'WBS': item.get('wbs', ''),
+                                })
+                        else:
+                            rows.append({
+                                'Section': '',
+                                'Field': '',
+                                'Value': '(No activity list available)',
+                                'Activity ID': '',
+                                'Activity Name': '',
+                                'WBS': '',
+                            })
+
+                        # Empty separator rows between metrics
+                        rows.append({'Section': '', 'Field': '', 'Value': '',
+                                     'Activity ID': '', 'Activity Name': '', 'WBS': ''})
+                        rows.append({'Section': '', 'Field': '', 'Value': '',
+                                     'Activity ID': '', 'Activity Name': '', 'WBS': ''})
+
+                pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
+
+            # ─── Post-process formatting ───
+            workbook = writer.book
+
+            header_font = Font(bold=True, color='FFFFFF', size=11)
+            header_fill = PatternFill(start_color='1E40AF', end_color='1E40AF', fill_type='solid')
+            metric_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+            activity_hdr_fill = PatternFill(start_color='DBEAFE', end_color='DBEAFE', fill_type='solid')
+            bold_font = Font(bold=True)
+            wrap_align = Alignment(wrap_text=True, vertical='top')
+
+            for sheet_name in workbook.sheetnames:
+                ws = workbook[sheet_name]
+
+                # Header row style
+                for cell in ws[1]:
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+
+                # Auto column widths
+                for col in ws.columns:
+                    max_len = 10
+                    col_letter = col[0].column_letter
+                    for cell in col:
+                        try:
+                            val = str(cell.value) if cell.value is not None else ''
+                            if len(val) > max_len:
+                                max_len = len(val)
+                        except:
+                            pass
+                    ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+                # Freeze header row
+                ws.freeze_panes = 'A2'
+
+                # Standard sheet highlighting
+                if sheet_name not in ['Report Info', 'Top Actions Summary']:
+                    for row in ws.iter_rows(min_row=2):
+                        section_cell = row[0]
+                        if section_cell.value == 'METRIC':
+                            for c in row:
+                                c.fill = metric_fill
+                                c.font = bold_font
+                        elif section_cell.value == 'AFFECTED ACTIVITIES':
+                            for c in row:
+                                c.fill = activity_hdr_fill
+                                c.font = bold_font
+                        for c in row:
+                            c.alignment = wrap_align
 
         output.seek(0)
 
-        filename = f"health_top_actions_{selected_standard}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filename = f"health_top_actions_{selected_standard}_{severity_filter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return send_file(
             output,
             as_attachment=True,

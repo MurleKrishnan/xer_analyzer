@@ -143,6 +143,28 @@
             color: white;
         }
         
+        .export-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            min-width: 240px;
+        }
+        
+        .export-label {
+            font-size: 0.85rem;
+            color: white;
+            opacity: 0.9;
+        }
+        
+        .severity-select {
+            padding: 0.6rem;
+            border-radius: 6px;
+            border: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        
         .category-section {
             background: white;
             padding: 1.5rem;
@@ -362,7 +384,16 @@
                         </div>
                     </div>
                     
-                    <div style="display:flex; flex-direction:column; gap:0.75rem;">
+                    <!-- Export Panel with Severity Filter -->
+                    <div class="export-panel">
+                        <label class="export-label">Excel Severity Filter:</label>
+                        <select id="excelSeverityFilter" class="severity-select">
+                            <option value="all">All Severities</option>
+                            <option value="critical">Critical Only</option>
+                            <option value="high">Critical + High</option>
+                            <option value="medium">Critical + High + Medium</option>
+                        </select>
+                        
                         <button class="action-btn-large btn-pdf" onclick="downloadPDF()">
                             📄 Executive PDF
                         </button>

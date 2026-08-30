@@ -5,7 +5,7 @@
     - Full affected activity lists (scrollable)
     - Multi-standard filtering
     - Top priority actions with expandable activity lists
-    - Excel export for Top Actions with full activity details
+    - Excel export with severity filter (All / Critical / High / Medium)
 */
 
 let healthData = null;
@@ -304,6 +304,11 @@ function downloadActionsPDF() {
 }
 
 function downloadActionsExcel() {
-    // Exports Top Actions + full affected activities for selected standard
-    window.location.href = `/api/actions-excel?standard=${currentStandard}`;
+    // Read severity filter from dropdown
+    const sevEl = document.getElementById('excelSeverityFilter');
+    const severity = sevEl ? sevEl.value : 'all';
+
+    // Build query with standard + severity
+    window.location.href =
+        `/api/actions-excel?standard=${currentStandard}&severity=${severity}`;
 }
