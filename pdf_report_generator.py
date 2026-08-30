@@ -8,6 +8,7 @@ Generates professional PDF reports for:
 Supports:
 - Standard filter (DCMA/DOE/NASA/GAO/AACE/Industry/all)
 - Severity filter (all/critical/high/medium)
+- Fixed font leading for giant score text (no overlap)
 """
 
 from reportlab.lib.pagesizes import A4
@@ -51,8 +52,9 @@ class PDFReportGenerator:
             name='CustomTitle',
             parent=styles['Heading1'],
             fontSize=24,
+            leading=28,
             textColor=colors.HexColor('#1e40af'),
-            spaceAfter=12,
+            spaceAfter=8,
             alignment=TA_CENTER,
             fontName='Helvetica-Bold'
         ))
@@ -60,29 +62,46 @@ class PDFReportGenerator:
         styles.add(ParagraphStyle(
             name='CustomSubtitle',
             parent=styles['Normal'],
-            fontSize=14,
+            fontSize=13,
+            leading=16,
             textColor=colors.HexColor('#64748b'),
             alignment=TA_CENTER,
-            spaceAfter=20
+            spaceAfter=15
         ))
 
         styles.add(ParagraphStyle(
             name='SectionHeader',
             parent=styles['Heading2'],
-            fontSize=16,
+            fontSize=15,
+            leading=18,
             textColor=colors.HexColor('#1e40af'),
-            spaceBefore=15,
-            spaceAfter=10,
+            spaceBefore=12,
+            spaceAfter=8,
             fontName='Helvetica-Bold'
         ))
 
+        # FIXED: Added leading=54 to prevent overlap with 48pt font!
         styles.add(ParagraphStyle(
             name='ScoreBig',
             parent=styles['Normal'],
             fontSize=48,
+            leading=54,
             textColor=colors.HexColor('#1e40af'),
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            fontName='Helvetica-Bold',
+            spaceBefore=6,
+            spaceAfter=2
+        ))
+
+        styles.add(ParagraphStyle(
+            name='ScoreSub',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=14,
+            textColor=colors.HexColor('#64748b'),
+            alignment=TA_CENTER,
+            spaceBefore=0,
+            spaceAfter=12
         ))
 
         styles.add(ParagraphStyle(
@@ -144,7 +163,7 @@ class PDFReportGenerator:
         return sev in self.allowed_severities
 
     def generate_executive_report(self):
-        """Create the executive summary PDF (respects severity filter)."""
+        """Create the executive summary PDF (respects severity filter & no overlaps)."""
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer, pagesize=A4,
@@ -154,10 +173,10 @@ class PDFReportGenerator:
 
         story = []
 
-        story.append(Spacer(1, 1 * cm))
+        story.append(Spacer(1, 0.5 * cm))
         story.append(Paragraph("SCHEDULE HEALTH", self.styles['CustomTitle']))
         story.append(Paragraph("Executive Assessment Report", self.styles['CustomSubtitle']))
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(Spacer(1, 0.3 * cm))
 
         story.append(Paragraph(
             f"<b>Project File:</b> {self.file_name}",
@@ -184,17 +203,15 @@ class PDFReportGenerator:
                 self.styles['CheckBody']
             ))
 
-        story.append(Spacer(1, 1 * cm))
+        story.append(Spacer(1, 0.6 * cm))
 
+        # ─── OVERALL HEALTH SCORE ───
         score = self.data.get('overall_score', 0)
         story.append(Paragraph("OVERALL HEALTH SCORE", self.styles['SectionHeader']))
         story.append(Paragraph(f"{score}", self.styles['ScoreBig']))
-        story.append(Paragraph(
-            "<font color='#64748b'>out of 100</font>",
-            self.styles['CustomSubtitle']
-        ))
+        story.append(Paragraph("out of 100", self.styles['ScoreSub']))
 
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(Spacer(1, 0.4 * cm))
 
         # Summary Stats
         stats_data = [
@@ -339,7 +356,6 @@ class PDFReportGenerator:
                     self.styles['CheckBody']
                 ))
 
-                # Apply severity filter to failed checks
                 failed_checks = [
                     c for c in category.get('checks', [])
                     if c.get('status') == 'fail' and self._matches_severity(c)
@@ -505,7 +521,6 @@ class PDFReportGenerator:
         any_failures_found = False
 
         for std_name, std_data in self.data.get('standards', {}).items():
-            # Apply severity filter
             failed_in_std = []
             for cat in std_data.get('categories', []):
                 for check in cat.get('checks', []):
