@@ -1,222 +1,109 @@
 """
 SCHEDULE DATA ENGINE
 ====================
-This is the "brain" that takes raw parsed XER data
-and turns it into meaningful schedule information.
-
-It handles:
-- Activity organization and lookup
-- Relationship/logic mapping
-- Calendar interpretation
-- Critical Path calculation (Forward & Backward Pass)
-- Float calculation
-- DCMA 14-Point schedule health checks
+Processes and analyzes P6 XER data with full WBS hierarchy support.
 """
 
 from datetime import datetime, timedelta
 from collections import defaultdict
 
 
-# ─── KEY P6 FIELD MAPPINGS ───
-# These are the most common field names found in XER files.
-# This map helps us refer to them with friendly names.
-
-FIELD_MAP = {
-    # TASK (Activity) fields
-    'task_id': 'task_id',              # Internal P6 ID (number)
-    'task_code': 'task_code',          # Activity ID (e.g., "A1000")
-    'task_name': 'task_name',          # Activity Name
-    'proj_id': 'proj_id',             # Project ID it belongs to
-    'wbs_id': 'wbs_id',              # WBS it belongs to
-    'status_code': 'status_code',     # TK_NotStart, TK_Active, TK_Complete
-    'task_type': 'task_type',         # TT_Task, TT_Mile, TT_LOE, TT_Rsrc, TT_WBS
-    'total_float_hr_cnt': 'total_float_hr_cnt',
-    'free_float_hr_cnt': 'free_float_hr_cnt',
-    'target_start_date': 'target_start_date',
-    'target_end_date': 'target_end_date',
-    'act_start_date': 'act_start_date',
-    'act_end_date': 'act_end_date',
-    'early_start_date': 'early_start_date',
-    'early_end_date': 'early_end_date',
-    'late_start_date': 'late_start_date',
-    'late_end_date': 'late_end_date',
-    'target_drtn_hr_cnt': 'target_drtn_hr_cnt',
-    'remain_drtn_hr_cnt': 'remain_drtn_hr_cnt',
-    'phys_complete_pct': 'phys_complete_pct',
-    'clndr_id': 'clndr_id',
-}
-
-
 class ScheduleEngine:
-    """
-    The main schedule analysis engine.
-    
-    HOW TO USE:
-        1. Create the engine:     engine = ScheduleEngine()
-        2. Load parsed data:      engine.load_data(parsed_tables)
-        3. Run analysis:          engine.analyze()
-        4. Get results:           results = engine.get_summary()
-    """
+    """The main schedule analysis engine."""
 
     def __init__(self):
-        """Set up empty containers for all schedule data."""
-        
-        # ─── RAW DATA (from parser) ───
         self.raw_tables = {}
-        
-        # ─── ORGANIZED DATA ───
-        self.projects = []           # List of projects
-        self.wbs_nodes = []          # WBS structure
-        self.activities = []         # All activities
-        self.relationships = []      # Logic ties
-        self.calendars = {}          # Calendar definitions
-        self.resources = []          # Resource assignments
-        
-        # ─── LOOKUP DICTIONARIES ───
-        # (Think of these as index pages in a book)
-        self.activity_by_id = {}       # Quick lookup: task_id → activity
-        self.activity_by_code = {}     # Quick lookup: task_code → activity
-        self.wbs_by_id = {}            # Quick lookup: wbs_id → wbs node
-        
-        # ─── NETWORK / GRAPH ───
-        self.successors = defaultdict(list)    # task_id → list of successor task_ids
-        self.predecessors = defaultdict(list)  # task_id → list of predecessor task_ids
-        
-        # ─── ANALYSIS RESULTS ───
+        self.projects = []
+        self.wbs_nodes = []
+        self.activities = []
+        self.relationships = []
+        self.calendars = {}
+        self.resources = []
+        self.activity_by_id = {}
+        self.activity_by_code = {}
+        self.wbs_by_id = {}
+        self.successors = defaultdict(list)
+        self.predecessors = defaultdict(list)
         self.critical_activities = []
         self.dcma_results = {}
         self.schedule_stats = {}
 
-    # ════════════════════════════════════════════
-    # STEP A: LOAD DATA
-    # ════════════════════════════════════════════
-
     def load_data(self, parsed_tables):
-        """
-        Takes the output from the XER Parser and organizes it.
-        
-        PARAMETERS:
-            parsed_tables: The dictionary returned by XERParser.parse()
-        """
         print("\n🔄 Loading data into Schedule Engine...")
         self.raw_tables = parsed_tables
-
-        # ─── Load Projects ───
         self.projects = parsed_tables.get('PROJECT', {}).get('rows', [])
         print(f"  📁 Projects loaded: {len(self.projects)}")
 
-        # ─── Load WBS ───
         self.wbs_nodes = parsed_tables.get('PROJWBS', {}).get('rows', [])
         for wbs in self.wbs_nodes:
             self.wbs_by_id[wbs.get('wbs_id', '')] = wbs
         print(f"  🌳 WBS nodes loaded: {len(self.wbs_nodes)}")
 
-        # ─── Load Activities ───
         self._load_activities(parsed_tables)
-
-        # ─── Load Relationships ───
         self._load_relationships(parsed_tables)
-
-        # ─── Load Calendars ───
         self._load_calendars(parsed_tables)
 
-        # ─── Load Resources ───
         self.resources = parsed_tables.get('TASKRSRC', {}).get('rows', [])
         print(f"  👷 Resource assignments loaded: {len(self.resources)}")
-
         print("  ✅ Data loading complete!")
 
     def _load_activities(self, parsed_tables):
-        """Load and enrich activity data."""
         raw_activities = parsed_tables.get('TASK', {}).get('rows', [])
-
         for act in raw_activities:
-            # Convert duration from hours to days (P6 stores in hours)
             orig_dur_hrs = self._to_float(act.get('target_drtn_hr_cnt', '0'))
             remain_dur_hrs = self._to_float(act.get('remain_drtn_hr_cnt', '0'))
-            
-            # Add calculated fields
-            act['original_duration_days'] = orig_dur_hrs / 8.0  # assuming 8-hr day
+            act['original_duration_days'] = orig_dur_hrs / 8.0
             act['remaining_duration_days'] = remain_dur_hrs / 8.0
-            
-            # Convert float from hours to days
+
             total_float_hrs = self._to_float(act.get('total_float_hr_cnt', '0'))
             free_float_hrs = self._to_float(act.get('free_float_hr_cnt', '0'))
             act['total_float_days'] = total_float_hrs / 8.0
             act['free_float_days'] = free_float_hrs / 8.0
 
-            # Parse dates
             for date_field in ['target_start_date', 'target_end_date',
                                'act_start_date', 'act_end_date',
                                'early_start_date', 'early_end_date',
                                'late_start_date', 'late_end_date']:
                 act[f'{date_field}_parsed'] = self._parse_date(act.get(date_field, ''))
 
-            # Determine status in plain English
             status = act.get('status_code', '')
             act['status_text'] = {
-                'TK_NotStart': 'Not Started',
-                'TK_Active': 'In Progress',
-                'TK_Complete': 'Completed'
+                'TK_NotStart': 'Not Started', 'TK_Active': 'In Progress', 'TK_Complete': 'Completed'
             }.get(status, status)
 
-            # Determine activity type in plain English
             task_type = act.get('task_type', '')
             act['type_text'] = {
-                'TT_Task': 'Task Dependent',
-                'TT_Rsrc': 'Resource Dependent',
-                'TT_Mile': 'Milestone',
-                'TT_LOE': 'Level of Effort',
-                'TT_WBS': 'WBS Summary',
-                'TT_FinMile': 'Finish Milestone'
+                'TT_Task': 'Task Dependent', 'TT_Rsrc': 'Resource Dependent',
+                'TT_Mile': 'Milestone', 'TT_LOE': 'Level of Effort',
+                'TT_WBS': 'WBS Summary', 'TT_FinMile': 'Finish Milestone'
             }.get(task_type, task_type)
 
-            # Is it critical? (Total Float = 0 or negative)
             act['is_critical'] = act['total_float_days'] <= 0
 
-            # Look up WBS name
             wbs_id = act.get('wbs_id', '')
             wbs_node = self.wbs_by_id.get(wbs_id, {})
             act['wbs_name'] = wbs_node.get('wbs_name', 'Unknown')
             act['wbs_code'] = wbs_node.get('wbs_short_name', 'Unknown')
 
-            # Store in main list and lookup dictionaries
             self.activities.append(act)
             self.activity_by_id[act.get('task_id', '')] = act
             self.activity_by_code[act.get('task_code', '')] = act
-
         print(f"  📌 Activities loaded: {len(self.activities)}")
 
     def _load_relationships(self, parsed_tables):
-        """
-        Load logic ties (relationships between activities).
-        
-        In P6, relationships are stored in the TASKPRED table:
-        - pred_task_id = the predecessor activity
-        - task_id = the successor activity  
-        - pred_type = FS, SS, FF, SF
-        - lag_hr_cnt = lag in hours
-        """
         raw_rels = parsed_tables.get('TASKPRED', {}).get('rows', [])
-
         for rel in raw_rels:
             pred_task_id = rel.get('pred_task_id', '')
             succ_task_id = rel.get('task_id', '')
-            
-            # Translate relationship type
             pred_type = rel.get('pred_type', '')
             rel['type_text'] = {
-                'PR_FS': 'Finish-to-Start',
-                'PR_SS': 'Start-to-Start',
-                'PR_FF': 'Finish-to-Finish',
-                'PR_SF': 'Start-to-Finish'
+                'PR_FS': 'Finish-to-Start', 'PR_SS': 'Start-to-Start',
+                'PR_FF': 'Finish-to-Finish', 'PR_SF': 'Start-to-Finish'
             }.get(pred_type, pred_type)
 
-            # Convert lag from hours to days
             lag_hrs = self._to_float(rel.get('lag_hr_cnt', '0'))
             rel['lag_days'] = lag_hrs / 8.0
 
-            # Add predecessor/successor names for easy reading
             pred_act = self.activity_by_id.get(pred_task_id, {})
             succ_act = self.activity_by_id.get(succ_task_id, {})
             rel['pred_name'] = pred_act.get('task_name', 'Unknown')
@@ -224,564 +111,93 @@ class ScheduleEngine:
             rel['succ_name'] = succ_act.get('task_name', 'Unknown')
             rel['succ_code'] = succ_act.get('task_code', 'Unknown')
 
-            # Build the network graph
-            self.successors[pred_task_id].append({
-                'task_id': succ_task_id,
-                'type': pred_type,
-                'lag_days': rel['lag_days']
-            })
-            self.predecessors[succ_task_id].append({
-                'task_id': pred_task_id,
-                'type': pred_type,
-                'lag_days': rel['lag_days']
-            })
-
+            self.successors[pred_task_id].append({'task_id': succ_task_id, 'type': pred_type, 'lag_days': rel['lag_days']})
+            self.predecessors[succ_task_id].append({'task_id': pred_task_id, 'type': pred_type, 'lag_days': rel['lag_days']})
             self.relationships.append(rel)
-
         print(f"  🔗 Relationships loaded: {len(self.relationships)}")
 
     def _load_calendars(self, parsed_tables):
-        """Load calendar definitions."""
-        raw_calendars = parsed_tables.get('CALENDAR', {}).get('rows', [])
-        for cal in raw_calendars:
-            cal_id = cal.get('clndr_id', '')
-            self.calendars[cal_id] = cal
+        for cal in parsed_tables.get('CALENDAR', {}).get('rows', []):
+            self.calendars[cal.get('clndr_id', '')] = cal
         print(f"  📅 Calendars loaded: {len(self.calendars)}")
 
-    # ════════════════════════════════════════════
-    # STEP B: ANALYZE
-    # ════════════════════════════════════════════
-
     def analyze(self):
-        """
-        Run all schedule analyses.
-        This is the main "do everything" method.
-        """
         print("\n🔍 Running Schedule Analysis...")
-        
         self._calculate_statistics()
         self._identify_critical_path()
         self._run_dcma_checks()
-        
         print("  ✅ Analysis complete!")
 
     def _calculate_statistics(self):
-        """Calculate basic schedule statistics."""
-        print("  📊 Calculating statistics...")
-
         total = len(self.activities)
-        
-        # Count by status
-        not_started = sum(1 for a in self.activities 
-                         if a.get('status_code') == 'TK_NotStart')
-        in_progress = sum(1 for a in self.activities 
-                         if a.get('status_code') == 'TK_Active')
-        completed = sum(1 for a in self.activities 
-                       if a.get('status_code') == 'TK_Complete')
-
-        # Count by type
-        tasks = sum(1 for a in self.activities 
-                   if a.get('task_type') in ['TT_Task', 'TT_Rsrc'])
-        milestones = sum(1 for a in self.activities 
-                        if a.get('task_type') in ['TT_Mile', 'TT_FinMile'])
-        loe = sum(1 for a in self.activities 
-                 if a.get('task_type') == 'TT_LOE')
-        wbs_summary = sum(1 for a in self.activities 
-                         if a.get('task_type') == 'TT_WBS')
-
-        # Count critical
-        critical_count = sum(1 for a in self.activities if a.get('is_critical'))
-
-        # Float distribution
-        negative_float = sum(1 for a in self.activities 
-                            if a.get('total_float_days', 0) < 0)
-        zero_float = sum(1 for a in self.activities 
-                        if a.get('total_float_days', 0) == 0)
-        positive_float = sum(1 for a in self.activities 
-                            if a.get('total_float_days', 0) > 0)
-        high_float = sum(1 for a in self.activities 
-                        if a.get('total_float_days', 0) > 44)  # > 44 days ≈ 2 months
-
         self.schedule_stats = {
             'total_activities': total,
-            'not_started': not_started,
-            'in_progress': in_progress,
-            'completed': completed,
-            'tasks': tasks,
-            'milestones': milestones,
-            'loe': loe,
-            'wbs_summary': wbs_summary,
-            'critical_count': critical_count,
-            'negative_float': negative_float,
-            'zero_float': zero_float,
-            'positive_float': positive_float,
-            'high_float_gt_44d': high_float,
+            'not_started': sum(1 for a in self.activities if a.get('status_code') == 'TK_NotStart'),
+            'in_progress': sum(1 for a in self.activities if a.get('status_code') == 'TK_Active'),
+            'completed': sum(1 for a in self.activities if a.get('status_code') == 'TK_Complete'),
+            'tasks': sum(1 for a in self.activities if a.get('task_type') in ['TT_Task', 'TT_Rsrc']),
+            'milestones': sum(1 for a in self.activities if a.get('task_type') in ['TT_Mile', 'TT_FinMile']),
+            'loe': sum(1 for a in self.activities if a.get('task_type') == 'TT_LOE'),
+            'wbs_summary': sum(1 for a in self.activities if a.get('task_type') == 'TT_WBS'),
+            'critical_count': sum(1 for a in self.activities if a.get('is_critical')),
+            'negative_float': sum(1 for a in self.activities if a.get('total_float_days', 0) < 0),
+            'zero_float': sum(1 for a in self.activities if a.get('total_float_days', 0) == 0),
+            'positive_float': sum(1 for a in self.activities if a.get('total_float_days', 0) > 0),
+            'high_float_gt_44d': sum(1 for a in self.activities if a.get('total_float_days', 0) > 44),
             'total_relationships': len(self.relationships),
             'total_calendars': len(self.calendars),
         }
 
     def _identify_critical_path(self):
-        """
-        Identify critical activities.
-        
-        SIMPLE APPROACH: Activities with Total Float ≤ 0 are critical.
-        (This matches how P6 determines criticality by default)
-        """
-        print("  🔴 Identifying Critical Path...")
-
-        self.critical_activities = [
-            a for a in self.activities 
-            if a.get('is_critical') and a.get('task_type') not in ['TT_LOE', 'TT_WBS']
-        ]
-
+        self.critical_activities = [a for a in self.activities if a.get('is_critical') and a.get('task_type') not in ['TT_LOE', 'TT_WBS']]
         print(f"     Found {len(self.critical_activities)} critical activities")
 
     def _run_dcma_checks(self):
-        """
-        Run the DCMA 14-Point Schedule Assessment.
-        
-        WHAT IS DCMA 14-POINT?
-        It's a standard checklist used by the U.S. Defense Contract 
-        Management Agency to evaluate schedule health. Even non-defense
-        projects use it as a best practice.
-        
-        Each check produces a percentage — there are acceptable thresholds.
-        """
-        print("  🏥 Running DCMA 14-Point Health Checks...")
-
         total = len(self.activities)
         if total == 0:
-            print("     ⚠️ No activities to analyze!")
             return
-
-        # Filter to just "real" activities (exclude LOE and WBS Summary)
-        real_activities = [
-            a for a in self.activities
-            if a.get('task_type') not in ['TT_LOE', 'TT_WBS']
-        ]
-        real_count = len(real_activities)
-        
-        incomplete_activities = [
-            a for a in real_activities 
-            if a.get('status_code') != 'TK_Complete'
-        ]
+        real_activities = [a for a in self.activities if a.get('task_type') not in ['TT_LOE', 'TT_WBS']]
+        incomplete_activities = [a for a in real_activities if a.get('status_code') != 'TK_Complete']
         incomplete_count = len(incomplete_activities)
 
-        # ─── CHECK 1: Logic (Missing Predecessors) ───
-        # Every activity should have at least one predecessor
-        # THRESHOLD: ≤ 5% should be missing predecessors
-        missing_pred = []
-        for act in incomplete_activities:
-            task_id = act.get('task_id', '')
-            if task_id not in self.predecessors:
-                missing_pred.append(act)
-        
-        # ─── CHECK 2: Logic (Missing Successors) ───
-        # Every activity should have at least one successor
-        # THRESHOLD: ≤ 5% should be missing successors
-        missing_succ = []
-        for act in incomplete_activities:
-            task_id = act.get('task_id', '')
-            if task_id not in self.successors:
-                missing_succ.append(act)
-
-        # ─── CHECK 3: Leads (Negative Lag) ───
-        # No relationships should have negative lag
-        # THRESHOLD: 0%
+        missing_pred = [a for a in incomplete_activities if a.get('task_id', '') not in self.predecessors]
+        missing_succ = [a for a in incomplete_activities if a.get('task_id', '') not in self.successors]
         leads = [r for r in self.relationships if r.get('lag_days', 0) < 0]
-
-        # ─── CHECK 4: Lags ───
-        # Minimize use of lags
-        # THRESHOLD: ≤ 5%
         lags = [r for r in self.relationships if r.get('lag_days', 0) > 0]
+        non_fs = [r for r in self.relationships if r.get('pred_type') != 'PR_FS']
 
-        # ─── CHECK 5: Relationship Types ───
-        # Minimize non-FS relationships
-        # THRESHOLD: ≤ 10% should be non-FS
-        non_fs = [r for r in self.relationships 
-                 if r.get('pred_type') != 'PR_FS']
+        hard_constraint_types = ['CS_ALAP', 'CS_MSO', 'CS_MFO', 'CS_MANDSTART', 'CS_MANDFIN']
+        constrained = [a for a in incomplete_activities if a.get('cstr_type', '') in hard_constraint_types]
+        high_float = [a for a in incomplete_activities if a.get('total_float_days', 0) > 44]
+        neg_float = [a for a in incomplete_activities if a.get('total_float_days', 0) < 0]
+        high_duration = [a for a in incomplete_activities if a.get('original_duration_days', 0) > 44 and a.get('task_type') not in ['TT_Mile', 'TT_FinMile']]
+        invalid_dates = [a for a in self.activities if a.get('status_code') == 'TK_NotStart' and a.get('act_start_date', '')]
 
-        # ─── CHECK 6: Hard Constraints ───
-        # Minimize hard constraints (they override CPM logic)
-        # THRESHOLD: ≤ 5%
-        hard_constraint_types = [
-            'CS_ALAP',    # As Late As Possible
-            'CS_MSO',     # Must Start On
-            'CS_MFO',     # Must Finish On
-            'CS_MANDSTART', # Mandatory Start
-            'CS_MANDFIN',   # Mandatory Finish
-        ]
-        constrained = [
-            a for a in incomplete_activities
-            if a.get('cstr_type', '') in hard_constraint_types
-               or a.get('cstr_type2', '') in hard_constraint_types
-        ]
-
-        # ─── CHECK 7: High Float ───
-        # Activities with excessive float (>44 days) indicate disconnected logic
-        # THRESHOLD: ≤ 5%
-        high_float = [
-            a for a in incomplete_activities
-            if a.get('total_float_days', 0) > 44
-        ]
-
-        # ─── CHECK 8: Negative Float ───
-        # Negative float means the schedule can't meet its constraints
-        # THRESHOLD: 0%
-        neg_float = [
-            a for a in incomplete_activities
-            if a.get('total_float_days', 0) < 0
-        ]
-
-        # ─── CHECK 9: High Duration ───
-        # Activities longer than 44 days should be broken down
-        # THRESHOLD: ≤ 5%
-        high_duration = [
-            a for a in incomplete_activities
-            if a.get('original_duration_days', 0) > 44
-            and a.get('task_type') not in ['TT_Mile', 'TT_FinMile']
-        ]
-
-        # ─── CHECK 10: Invalid Dates ───
-        # Actual dates should not be in the future (past the data date)
-        # This is a simplified check
-        invalid_dates = [
-            a for a in self.activities
-            if a.get('status_code') == 'TK_NotStart' 
-            and a.get('act_start_date', '') != ''
-        ]
-
-        # ─── CHECK 11: Resources ───
-        # Activities should have resources assigned
-        tasks_with_resources = set()
-        for res in self.resources:
-            tasks_with_resources.add(res.get('task_id', ''))
-        
-        missing_resources = [
-            a for a in incomplete_activities
-            if a.get('task_id', '') not in tasks_with_resources
-            and a.get('task_type') not in ['TT_Mile', 'TT_FinMile']
-        ]
-
-        # ─── CHECK 12: Critical Path Length Index (CPLI) ───
-        # CPLI = (Project Duration + Total Float of Last Activity) / Project Duration
-        # THRESHOLD: ≥ 1.0 (schedule can meet its deadline)
-        # Simplified calculation
-        cpli = "N/A (requires data date and project finish)"
-
-        # ─── CHECK 13: Baseline Execution Index (BEI) ───
-        # BEI = # of Completed Tasks / # of Tasks That Should Be Complete
-        # Simplified
-        bei = "N/A (requires baseline comparison)"
-
-        # ─── CHECK 14: Critical Path Test ───
-        # Verify the critical path is valid and continuous
+        tasks_with_resources = set(res.get('task_id', '') for res in self.resources)
+        missing_resources = [a for a in incomplete_activities if a.get('task_id', '') not in tasks_with_resources and a.get('task_type') not in ['TT_Mile', 'TT_FinMile']]
         critical_pct = (len(self.critical_activities) / incomplete_count * 100) if incomplete_count > 0 else 0
 
-        # ─── COMPILE RESULTS ───
         def calc_pct(count, base):
             return round((count / base * 100), 1) if base > 0 else 0
 
         self.dcma_results = {
-            '01_Missing_Predecessors': {
-                'count': len(missing_pred),
-                'total': incomplete_count,
-                'pct': calc_pct(len(missing_pred), incomplete_count),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(missing_pred), incomplete_count) <= 5,
-                'activities': missing_pred
-            },
-            '02_Missing_Successors': {
-                'count': len(missing_succ),
-                'total': incomplete_count,
-                'pct': calc_pct(len(missing_succ), incomplete_count),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(missing_succ), incomplete_count) <= 5,
-                'activities': missing_succ
-            },
-            '03_Leads': {
-                'count': len(leads),
-                'total': len(self.relationships),
-                'pct': calc_pct(len(leads), len(self.relationships)),
-                'threshold': '0%',
-                'pass': len(leads) == 0,
-                'items': leads
-            },
-            '04_Lags': {
-                'count': len(lags),
-                'total': len(self.relationships),
-                'pct': calc_pct(len(lags), len(self.relationships)),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(lags), len(self.relationships)) <= 5,
-                'items': lags
-            },
-            '05_Relationship_Types': {
-                'count': len(non_fs),
-                'total': len(self.relationships),
-                'pct': calc_pct(len(non_fs), len(self.relationships)),
-                'threshold': '≤ 10%',
-                'pass': calc_pct(len(non_fs), len(self.relationships)) <= 10,
-                'items': non_fs
-            },
-            '06_Hard_Constraints': {
-                'count': len(constrained),
-                'total': incomplete_count,
-                'pct': calc_pct(len(constrained), incomplete_count),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(constrained), incomplete_count) <= 5,
-                'activities': constrained
-            },
-            '07_High_Float': {
-                'count': len(high_float),
-                'total': incomplete_count,
-                'pct': calc_pct(len(high_float), incomplete_count),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(high_float), incomplete_count) <= 5,
-                'activities': high_float
-            },
-            '08_Negative_Float': {
-                'count': len(neg_float),
-                'total': incomplete_count,
-                'pct': calc_pct(len(neg_float), incomplete_count),
-                'threshold': '0%',
-                'pass': len(neg_float) == 0,
-                'activities': neg_float
-            },
-            '09_High_Duration': {
-                'count': len(high_duration),
-                'total': incomplete_count,
-                'pct': calc_pct(len(high_duration), incomplete_count),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(high_duration), incomplete_count) <= 5,
-                'activities': high_duration
-            },
-            '10_Invalid_Dates': {
-                'count': len(invalid_dates),
-                'total': total,
-                'pct': calc_pct(len(invalid_dates), total),
-                'threshold': '0%',
-                'pass': len(invalid_dates) == 0,
-                'activities': invalid_dates
-            },
-            '11_Missing_Resources': {
-                'count': len(missing_resources),
-                'total': incomplete_count,
-                'pct': calc_pct(len(missing_resources), incomplete_count),
-                'threshold': '≤ 5%',
-                'pass': calc_pct(len(missing_resources), incomplete_count) <= 5,
-                'activities': missing_resources
-            },
-            '12_CPLI': {
-                'value': cpli,
-                'threshold': '≥ 1.0',
-                'pass': None
-            },
-            '13_BEI': {
-                'value': bei,
-                'threshold': '≥ 1.0',
-                'pass': None
-            },
-            '14_Critical_Path_Pct': {
-                'value': round(critical_pct, 1),
-                'threshold': 'Should be reasonable (typically 10-20%)',
-                'pass': 5 <= critical_pct <= 25 if critical_pct > 0 else None
-            }
+            '01_Missing_Predecessors': {'count': len(missing_pred), 'total': incomplete_count, 'pct': calc_pct(len(missing_pred), incomplete_count), 'threshold': '≤ 5%', 'pass': calc_pct(len(missing_pred), incomplete_count) <= 5, 'activities': missing_pred},
+            '02_Missing_Successors': {'count': len(missing_succ), 'total': incomplete_count, 'pct': calc_pct(len(missing_succ), incomplete_count), 'threshold': '≤ 5%', 'pass': calc_pct(len(missing_succ), incomplete_count) <= 5, 'activities': missing_succ},
+            '03_Leads': {'count': len(leads), 'total': len(self.relationships), 'pct': calc_pct(len(leads), len(self.relationships)), 'threshold': '0%', 'pass': len(leads) == 0, 'items': leads},
+            '04_Lags': {'count': len(lags), 'total': len(self.relationships), 'pct': calc_pct(len(lags), len(self.relationships)), 'threshold': '≤ 5%', 'pass': calc_pct(len(lags), len(self.relationships)) <= 5, 'items': lags},
+            '05_Relationship_Types': {'count': len(non_fs), 'total': len(self.relationships), 'pct': calc_pct(len(non_fs), len(self.relationships)), 'threshold': '≤ 10%', 'pass': calc_pct(len(non_fs), len(self.relationships)) <= 10, 'items': non_fs},
+            '06_Hard_Constraints': {'count': len(constrained), 'total': incomplete_count, 'pct': calc_pct(len(constrained), incomplete_count), 'threshold': '≤ 5%', 'pass': calc_pct(len(constrained), incomplete_count) <= 5, 'activities': constrained},
+            '07_High_Float': {'count': len(high_float), 'total': incomplete_count, 'pct': calc_pct(len(high_float), incomplete_count), 'threshold': '≤ 5%', 'pass': calc_pct(len(high_float), incomplete_count) <= 5, 'activities': high_float},
+            '08_Negative_Float': {'count': len(neg_float), 'total': incomplete_count, 'pct': calc_pct(len(neg_float), incomplete_count), 'threshold': '0%', 'pass': len(neg_float) == 0, 'activities': neg_float},
+            '09_High_Duration': {'count': len(high_duration), 'total': incomplete_count, 'pct': calc_pct(len(high_duration), incomplete_count), 'threshold': '≤ 5%', 'pass': calc_pct(len(high_duration), incomplete_count) <= 5, 'activities': high_duration},
+            '10_Invalid_Dates': {'count': len(invalid_dates), 'total': total, 'pct': calc_pct(len(invalid_dates), total), 'threshold': '0%', 'pass': len(invalid_dates) == 0, 'activities': invalid_dates},
+            '11_Missing_Resources': {'count': len(missing_resources), 'total': incomplete_count, 'pct': calc_pct(len(missing_resources), incomplete_count), 'threshold': '≤ 5%', 'pass': calc_pct(len(missing_resources), incomplete_count) <= 5, 'activities': missing_resources},
+            '12_CPLI': {'value': 'N/A', 'threshold': '≥ 1.0', 'pass': None},
+            '13_BEI': {'value': 'N/A', 'threshold': '≥ 1.0', 'pass': None},
+            '14_Critical_Path_Pct': {'value': round(critical_pct, 1), 'threshold': '5-25%', 'pass': 5 <= critical_pct <= 25 if critical_pct > 0 else None}
         }
-
-        # Print results
-        self._print_dcma_results()
-
-    def _print_dcma_results(self):
-        """Print DCMA results in a nice format."""
-        print("\n" + "=" * 65)
-        print("🏥 DCMA 14-POINT SCHEDULE HEALTH CHECK")
-        print("=" * 65)
-        
-        for check_name, result in self.dcma_results.items():
-            if 'pct' in result:
-                status = "✅ PASS" if result['pass'] else "❌ FAIL"
-                print(f"  {check_name:35s} {result['pct']:>6.1f}% "
-                      f"({result['count']}/{result['total']}) "
-                      f"[{result['threshold']}] {status}")
-            else:
-                value = result.get('value', 'N/A')
-                status = ""
-                if result.get('pass') is True:
-                    status = "✅ PASS"
-                elif result.get('pass') is False:
-                    status = "❌ FAIL"
-                print(f"  {check_name:35s} {str(value):>6s} "
-                      f"[{result['threshold']}] {status}")
-        
-        # Overall score
-        checks_with_results = [r for r in self.dcma_results.values() 
-                               if r.get('pass') is not None]
-        passed = sum(1 for r in checks_with_results if r['pass'])
-        total_checks = len(checks_with_results)
-        
-        print(f"\n  OVERALL SCORE: {passed}/{total_checks} checks passed")
-        print("=" * 65)
-
-    # ════════════════════════════════════════════
-    # STEP C: GET RESULTS
-    # ════════════════════════════════════════════
-
-    def get_summary(self):
-        """Return a summary of all analysis results."""
-        return {
-            'stats': self.schedule_stats,
-            'dcma': self.dcma_results,
-            'critical_path': self.critical_activities,
-        }
-
-    def get_activities_dataframe(self):
-        """
-        Convert activities to a pandas DataFrame for easy analysis.
-        
-        A DataFrame is like an Excel spreadsheet in Python.
-        """
-        try:
-            import pandas as pd
-            
-            # Select the most useful columns
-            columns = [
-                'task_code', 'task_name', 'wbs_code', 'wbs_name',
-                'status_text', 'type_text',
-                'original_duration_days', 'remaining_duration_days',
-                'total_float_days', 'free_float_days',
-                'is_critical',
-                'early_start_date', 'early_end_date',
-                'late_start_date', 'late_end_date',
-                'target_start_date', 'target_end_date',
-                'act_start_date', 'act_end_date',
-                'phys_complete_pct'
-            ]
-            
-            # Build rows with only the selected columns
-            rows = []
-            for act in self.activities:
-                row = {col: act.get(col, '') for col in columns}
-                rows.append(row)
-            
-            df = pd.DataFrame(rows)
-            return df
-            
-        except ImportError:
-            print("⚠️ pandas not installed. Run: pip install pandas")
-            return None
-
-    # ════════════════════════════════════════════
-    # UTILITY METHODS
-    # ════════════════════════════════════════════
-
-    def _to_float(self, value):
-        """Safely convert a string to float."""
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return 0.0
-
-    def _parse_date(self, date_string):
-        """
-        Parse a P6 date string into a Python date object.
-        
-        P6 dates can come in various formats:
-        - "2024-01-15 08:00"
-        - "2024-01-15"
-        - "15-Jan-24"
-        - "" (empty)
-        """
-        if not date_string or date_string.strip() == '':
-            return None
-
-        # Try common P6 date formats
-        formats = [
-            '%Y-%m-%d %H:%M',
-            '%Y-%m-%d',
-            '%d-%b-%y',
-            '%d-%b-%Y',
-            '%m/%d/%Y',
-            '%m/%d/%Y %H:%M',
-        ]
-
-        for fmt in formats:
-            try:
-                return datetime.strptime(date_string.strip(), fmt)
-            except ValueError:
-                continue
-
-        return None  # Couldn't parse the date
-
-    def find_activity(self, search_term):
-        """
-        Search for an activity by code or name.
-        
-        EXAMPLE:
-            results = engine.find_activity("A1000")
-            results = engine.find_activity("Mobilization")
-        """
-        results = []
-        search_lower = search_term.lower()
-        
-        for act in self.activities:
-            code = act.get('task_code', '').lower()
-            name = act.get('task_name', '').lower()
-            
-            if search_lower in code or search_lower in name:
-                results.append(act)
-        
-        return results
-
-    def get_predecessors(self, task_code):
-        """Get all predecessors of an activity."""
-        act = self.activity_by_code.get(task_code)
-        if not act:
-            return []
-        
-        task_id = act.get('task_id', '')
-        pred_list = self.predecessors.get(task_id, [])
-        
-        results = []
-        for pred in pred_list:
-            pred_act = self.activity_by_id.get(pred['task_id'], {})
-            results.append({
-                'code': pred_act.get('task_code', ''),
-                'name': pred_act.get('task_name', ''),
-                'type': pred['type'],
-                'lag': pred['lag_days']
-            })
-        
-        return results
-
-    def get_successors(self, task_code):
-        """Get all successors of an activity."""
-        act = self.activity_by_code.get(task_code)
-        if not act:
-            return []
-        
-        task_id = act.get('task_id', '')
-        succ_list = self.successors.get(task_id, [])
-        
-        results = []
-        for succ in succ_list:
-            succ_act = self.activity_by_id.get(succ['task_id'], {})
-            results.append({
-                'code': succ_act.get('task_code', ''),
-                'name': succ_act.get('task_name', ''),
-                'type': succ['type'],
-                'lag': succ['lag_days']
-            })
-            # ════════════════════════════════════════════
-    # NEW: ENHANCED ANALYTICS FOR WEB DASHBOARD
-    # ════════════════════════════════════════════
 
     def get_dashboard_data(self):
-        """
-        Package ALL data needed for the web dashboard.
-        
-        This is like preparing a "care package" for the browser
-        containing everything it needs to show charts and tables.
-        """
         return {
             'project_info': self._get_project_info(),
             'summary_cards': self._get_summary_cards(),
@@ -794,181 +210,428 @@ class ScheduleEngine:
             'activities_table': self._get_activities_table_data(),
             'schedule_timeline': self._get_timeline_data(),
         }
-    def get_gantt_data(self, max_activities=50000):
-        """
-        Prepare rich P6-style Gantt data with all columns.
-        
-        Returns activities with ALL P6-standard fields plus:
-        - Baseline dates
-        - Budgeted units/cost
-        - Performance metrics
-        - Earned value
-        """
+
+    def _get_project_info(self):
+        if not self.projects:
+            return {'name': 'Unknown', 'start': '', 'finish': ''}
+        proj = self.projects[0]
+        return {'name': proj.get('proj_short_name', 'Unnamed'), 'start': proj.get('plan_start_date', ''), 'finish': proj.get('plan_end_date', ''), 'data_date': proj.get('last_recalc_date', '')}
+
+    def _get_summary_cards(self):
+        stats = self.schedule_stats
+        total_checks = sum(1 for r in self.dcma_results.values() if r.get('pass') is not None)
+        passed_checks = sum(1 for r in self.dcma_results.values() if r.get('pass') is True)
+        return [
+            {'label': 'Total Activities', 'value': stats.get('total_activities', 0), 'icon': '📌', 'color': 'blue'},
+            {'label': 'Critical', 'value': stats.get('critical_count', 0), 'icon': '🔴', 'color': 'red'},
+            {'label': 'Completed', 'value': stats.get('completed', 0), 'icon': '✅', 'color': 'green'},
+            {'label': 'In Progress', 'value': stats.get('in_progress', 0), 'icon': '🔄', 'color': 'orange'},
+            {'label': 'Relationships', 'value': stats.get('total_relationships', 0), 'icon': '🔗', 'color': 'purple'},
+            {'label': 'DCMA', 'value': f"{passed_checks}/{total_checks}", 'icon': '🏥', 'color': 'teal'},
+        ]
+
+    def _get_status_distribution(self):
+        s = self.schedule_stats
+        return {'labels': ['Not Started', 'In Progress', 'Completed'], 'values': [s.get('not_started', 0), s.get('in_progress', 0), s.get('completed', 0)], 'colors': ['#94a3b8', '#f59e0b', '#10b981']}
+
+    def _get_float_distribution(self):
+        s = self.schedule_stats
+        return {'labels': ['Negative', 'Zero (Critical)', 'Positive', 'High (>44d)'], 'values': [s.get('negative_float', 0), s.get('zero_float', 0), s.get('positive_float', 0) - s.get('high_float_gt_44d', 0), s.get('high_float_gt_44d', 0)], 'colors': ['#dc2626', '#ef4444', '#3b82f6', '#f59e0b']}
+
+    def _get_dcma_summary(self):
+        results = []
+        for name, r in self.dcma_results.items():
+            if r.get('pass') is None:
+                continue
+            clean = name.replace('_', ' ').split(' ', 1)[1] if '_' in name else name
+            results.append({'name': clean, 'value': f"{r.get('pct', 0)}%" if 'pct' in r else str(r.get('value', '')), 'threshold': r.get('threshold', ''), 'pass': r.get('pass', False), 'count': r.get('count', 0), 'total': r.get('total', 0)})
+        return results
+
+    def _get_wbs_breakdown(self):
+        counts = {}
+        for a in self.activities:
+            w = a.get('wbs_name', 'Unknown')
+            k = w[:30] + '...' if len(w) > 30 else w
+            counts[k] = counts.get(k, 0) + 1
+        s = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        return {'labels': [i[0] for i in s], 'values': [i[1] for i in s]}
+
+    def _get_critical_activities_data(self):
+        return [{'code': a.get('task_code', ''), 'name': a.get('task_name', ''), 'wbs': a.get('wbs_name', ''), 'duration': round(a.get('original_duration_days', 0), 1), 'float': round(a.get('total_float_days', 0), 1), 'status': a.get('status_text', ''), 'start': a.get('early_start_date', ''), 'finish': a.get('early_end_date', '')} for a in self.critical_activities[:50]]
+
+    def _get_top_issues(self):
+        issues = []
+        for name, r in self.dcma_results.items():
+            if r.get('pass') is False:
+                clean = name.replace('_', ' ').split(' ', 1)[1] if '_' in name else name
+                issues.append({'check': clean, 'count': r.get('count', 0), 'percentage': r.get('pct', 0), 'severity': 'high' if r.get('pct', 0) > 15 else 'medium'})
+        issues.sort(key=lambda x: x['count'], reverse=True)
+        return issues
+
+    def _get_activities_table_data(self):
+        return [{'code': a.get('task_code', ''), 'name': a.get('task_name', ''), 'wbs': a.get('wbs_name', ''), 'type': a.get('type_text', ''), 'status': a.get('status_text', ''), 'duration': round(a.get('original_duration_days', 0), 1), 'remaining': round(a.get('remaining_duration_days', 0), 1), 'float': round(a.get('total_float_days', 0), 1), 'critical': a.get('is_critical', False), 'start': a.get('early_start_date', ''), 'finish': a.get('early_end_date', ''), 'progress': a.get('phys_complete_pct', '0')} for a in self.activities if a.get('task_type') != 'TT_WBS']
+
+    def _get_timeline_data(self):
+        results = []
+        for a in self.activities[:100]:
+            if a.get('task_type') in ['TT_WBS', 'TT_LOE']:
+                continue
+            start = a.get('early_start_date', '') or a.get('target_start_date', '')
+            finish = a.get('early_end_date', '') or a.get('target_end_date', '')
+            if start and finish:
+                results.append({'code': a.get('task_code', ''), 'name': a.get('task_name', '')[:40], 'start': start, 'finish': finish, 'critical': a.get('is_critical', False), 'progress': self._to_float(a.get('phys_complete_pct', '0'))})
+        return results
+
+    # ═══════════════════════════════════════════════════════════
+    # GANTT DATA - FULL WBS HIERARCHY WITH SAFE PARENT VALIDATION
+    # ═══════════════════════════════════════════════════════════
+
+    def get_gantt_data(self, max_activities=2000):
+        """Build Gantt data with ALL parent+child WBS + valid parent links."""
         tasks = []
         links = []
-        
-        # Filter activities
-        real_activities = [
-            a for a in self.activities
-            if a.get('task_type') not in ['TT_WBS']
-        ][:max_activities]
-        
-        # Get project data date for calculations
+        wbs_summary_tasks = []
+
+        real_activities = [a for a in self.activities if a.get('task_type') not in ['TT_WBS']][:max_activities]
         data_date = self._get_project_data_date()
-        
+        wbs_paths = self._build_wbs_paths()
+        activity_code_map = self._get_activity_code_map()
+
+        resource_names = {}
+        for r in self.raw_tables.get('RSRC', {}).get('rows', []):
+            resource_names[str(r.get('rsrc_id', ''))] = r.get('rsrc_name', '') or r.get('rsrc_short_name', '')
+
+        wbs_by_id = {str(w.get('wbs_id', '') or ''): w for w in self.wbs_nodes if w.get('wbs_id')}
+
+        def get_parent_id(w):
+            for key in ('parent_wbs_id', 'parent_id', 'parent_wbs', 'wbs_parent_id'):
+                val = w.get(key, '')
+                if val not in (None, '', '0', 0):
+                    return str(val)
+            return ''
+
+        activities_by_wbs = {}
         for act in real_activities:
-            task_id = act.get('task_id', '')
-            
-            # Get dates (prefer early, fall back to target/actual)
-            start_date = (act.get('act_start_date') or 
-                         act.get('early_start_date') or 
-                         act.get('target_start_date') or '')
-            
-            end_date = (act.get('act_end_date') or 
-                       act.get('early_end_date') or 
-                       act.get('target_end_date') or '')
-            
-            if not start_date or not end_date:
+            wid = str(act.get('wbs_id', '') or '')
+            if wid:
+                activities_by_wbs.setdefault(wid, []).append(act)
+
+        wbs_with_content = set()
+
+        def mark_ancestors(wbs_id):
+            current = str(wbs_id or '')
+            seen = set()
+            while current and current not in seen:
+                seen.add(current)
+                wbs_with_content.add(current)
+                w = wbs_by_id.get(current)
+                if not w:
+                    break
+                current = get_parent_id(w)
+
+        for wid in activities_by_wbs.keys():
+            mark_ancestors(wid)
+
+        wbs_children_map = {}
+        for wid, w in wbs_by_id.items():
+            pid = get_parent_id(w)
+            if pid:
+                wbs_children_map.setdefault(pid, []).append(wid)
+
+        def collect_all_acts_under_wbs(wbs_id, visited=None):
+            if visited is None:
+                visited = set()
+            wbs_id = str(wbs_id or '')
+            if not wbs_id or wbs_id in visited:
+                return []
+            visited.add(wbs_id)
+            acts = list(activities_by_wbs.get(wbs_id, []))
+            for child_id in wbs_children_map.get(wbs_id, []):
+                acts.extend(collect_all_acts_under_wbs(child_id, visited))
+            return acts
+
+        def get_wbs_depth(wbs_id, visited=None):
+            if visited is None:
+                visited = set()
+            wbs_id = str(wbs_id or '')
+            if not wbs_id or wbs_id in visited:
+                return 0
+            visited.add(wbs_id)
+            w = wbs_by_id.get(wbs_id)
+            if not w:
+                return 0
+            pid = get_parent_id(w)
+            if pid and pid in wbs_by_id:
+                return 1 + get_wbs_depth(pid, visited)
+            return 1
+
+        sorted_wbs = sorted(
+            [w for wid, w in wbs_by_id.items() if wid in wbs_with_content],
+            key=lambda w: get_wbs_depth(str(w.get('wbs_id', '')))
+        )
+
+        for wbs in sorted_wbs:
+            wbs_id = str(wbs.get('wbs_id', '') or '')
+            if not wbs_id:
                 continue
-            
-            start_clean = self._clean_date_for_gantt(start_date)
-            end_clean = self._clean_date_for_gantt(end_date)
-            
-            if not start_clean or not end_clean:
+
+            child_acts = collect_all_acts_under_wbs(wbs_id)
+            all_starts, all_ends = [], []
+            total_dur = total_budget = total_progress = 0.0
+            progress_count = 0
+            min_float = float('inf')
+
+            for act in child_acts:
+                s = act.get('act_start_date') or act.get('early_start_date') or act.get('target_start_date') or ''
+                e = act.get('act_end_date') or act.get('early_end_date') or act.get('target_end_date') or ''
+                ps = self._parse_date(s)
+                pe = self._parse_date(e)
+                if ps: all_starts.append(ps)
+                if pe: all_ends.append(pe)
+                total_dur += float(act.get('original_duration_days', 0) or 0)
+                tid = act.get('task_id', '')
+                for res in self.resources:
+                    if res.get('task_id') == tid:
+                        total_budget += self._to_float(res.get('target_cost', '0'))
+                fv = act.get('total_float_days', 0)
+                try:
+                    min_float = min(min_float, float(fv))
+                except:
+                    pass
+                total_progress += self._to_float(act.get('phys_complete_pct', '0'))
+                progress_count += 1
+
+            if all_starts and all_ends:
+                start_date = min(all_starts)
+                end_date = max(all_ends)
+            else:
+                start_date = data_date or datetime.now()
+                end_date = data_date or datetime.now()
+            if end_date < start_date:
+                end_date = start_date
+
+            avg_progress = (total_progress / progress_count) if progress_count else 0.0
+            wbs_depth = get_wbs_depth(wbs_id)
+            parent_wbs_id = get_parent_id(wbs)
+            parent_ref = f"wbs_{parent_wbs_id}" if parent_wbs_id in wbs_with_content else 0
+
+            wbs_name = (wbs.get('wbs_name', '') or '').strip() or (wbs.get('wbs_short_name', '') or 'Unnamed WBS').strip()
+            wbs_short = (wbs.get('wbs_short_name', '') or '').strip()
+
+            wbs_task = {
+                'id': f"wbs_{wbs_id}", 'activity_id': wbs_short, 'text': wbs_name,
+                'wbs': wbs_name, 'wbs_code': wbs_short, 'wbs_id': wbs_id,
+                'wbs_path': wbs_paths.get(wbs_id, {}).get('full_path', wbs_name),
+                'activity_type': 'WBS Summary', 'status': 'WBS',
+                'is_wbs': True, 'is_wbs_summary': True, 'wbs_depth': wbs_depth,
+                'parent': parent_ref,
+                'is_milestone': False, 'is_loe': False,
+                'is_critical': (min_float <= 0) if min_float != float('inf') else False,
+                'is_completed': avg_progress >= 100,
+                'critical_text': 'Critical' if (min_float <= 0 and min_float != float('inf')) else 'Non-Critical',
+                'start_date': start_date.strftime('%Y-%m-%d'),
+                'end_date': end_date.strftime('%Y-%m-%d'),
+                'original_duration': round(total_dur, 1),
+                'remaining_duration': 0, 'actual_duration': 0,
+                'early_start': start_date.strftime('%d-%b-%y') if all_starts else '',
+                'early_finish': end_date.strftime('%d-%b-%y') if all_ends else '',
+                'baseline_start': start_date.strftime('%d-%b-%y') if all_starts else '',
+                'baseline_finish': end_date.strftime('%d-%b-%y') if all_ends else '',
+                'late_start': '', 'late_finish': '', 'actual_start': '', 'actual_finish': '',
+                'total_float': round(min_float, 1) if min_float != float('inf') else 0,
+                'free_float': 0, 'progress': avg_progress / 100.0,
+                'physical_percent': round(avg_progress, 1),
+                'schedule_percent': 0, 'performance_percent': 0,
+                'budgeted_units': 0, 'actual_units': 0, 'remaining_units': 0,
+                'budgeted_cost': round(total_budget, 2),
+                'actual_cost': 0, 'remaining_cost': 0, 'earned_value': 0,
+                'at_completion_cost': round(total_budget, 2), 'variance_at_completion': 0,
+                'spi': 0, 'cpi': 0,
+                'constraint_type': '', 'constraint_date': '',
+                'predecessors': '', 'successors': '',
+                'predecessor_count': 0, 'successor_count': 0,
+                'calendar': '', 'primary_resource': '',
+                'float_band': '', 'duration_band': '', 'progress_band': '',
+                'start_month': start_date.strftime('%Y-%m (%b)') if all_starts else '',
+                'start_quarter': f"{start_date.year} Q{(start_date.month-1)//3 + 1}" if all_starts else '',
+                'start_year': str(start_date.year) if all_starts else '',
+                'finish_month': end_date.strftime('%Y-%m (%b)') if all_ends else '',
+                'finish_quarter': f"{end_date.year} Q{(end_date.month-1)//3 + 1}" if all_ends else '',
+                'finish_year': str(end_date.year) if all_ends else '',
+                'activity_codes': {},
+                'custom_class': f'gantt-wbs-l{min(wbs_depth, 12)}',
+                'type': 'project', 'open': True, 'child_count': len(child_acts),
+            }
+            levels = wbs_paths.get(wbs_id, {}).get('levels', [])
+            for i in range(12):
+                wbs_task[f'wbs_level_{i+1}'] = levels[i] if i < len(levels) else ''
+            wbs_summary_tasks.append(wbs_task)
+
+        # Build groupable values
+        groupable_values = {
+            'wbs_paths': set(), 'status': set(), 'type': set(), 'calendar': set(),
+            'critical': set(), 'primary_resource': set(),
+            'float_band': set(), 'duration_band': set(), 'progress_band': set(),
+            'start_month': set(), 'start_quarter': set(), 'start_year': set(),
+            'finish_month': set(), 'finish_quarter': set(), 'finish_year': set(),
+            'activity_codes': {},
+        }
+        for i in range(1, 13):
+            groupable_values[f'wbs_level_{i}'] = set()
+
+        for wbs_id, path_info in wbs_paths.items():
+            if wbs_id not in wbs_with_content:
                 continue
-            
-            # Baseline dates
-            bl_start = self._clean_date_for_gantt(act.get('target_start_date', ''))
-            bl_end = self._clean_date_for_gantt(act.get('target_end_date', ''))
-            
-            # Duration calculations
-            orig_dur = act.get('original_duration_days', 0)
-            remain_dur = act.get('remaining_duration_days', 0)
+            groupable_values['wbs_paths'].add(path_info.get('full_path', ''))
+            levels = path_info.get('levels', [])
+            for i in range(12):
+                v = levels[i] if i < len(levels) else ''
+                if v:
+                    groupable_values[f'wbs_level_{i+1}'].add(v)
+
+        # Build activity tasks
+        for act in real_activities:
+            task_id = str(act.get('task_id', '') or '')
+            if not task_id:
+                continue
+
+            start_str = act.get('act_start_date') or act.get('early_start_date') or act.get('target_start_date') or ''
+            end_str = act.get('act_end_date') or act.get('early_end_date') or act.get('target_end_date') or ''
+            start_clean = self._clean_date_for_gantt(start_str)
+            end_clean = self._clean_date_for_gantt(end_str)
+
+            if not start_clean and not end_clean:
+                base = data_date or datetime.now()
+                start_clean = base.strftime('%Y-%m-%d')
+                end_clean = base.strftime('%Y-%m-%d')
+            elif start_clean and not end_clean:
+                end_clean = start_clean
+            elif end_clean and not start_clean:
+                start_clean = end_clean
+
+            orig_dur = float(act.get('original_duration_days', 0) or 0)
+            remain_dur = float(act.get('remaining_duration_days', 0) or 0)
             actual_dur = max(0, orig_dur - remain_dur) if act.get('status_code') != 'TK_NotStart' else 0
-            
-            # Progress
             progress_pct = self._to_float(act.get('phys_complete_pct', '0'))
-            
-            # Resource/Cost data (from resource assignments if available)
-            budgeted_units = 0
-            actual_units = 0
-            remaining_units = 0
-            budgeted_cost = 0
-            actual_cost = 0
-            remaining_cost = 0
-            earned_value_cost = 0
-            
+            total_float = float(act.get('total_float_days', 0) or 0)
+
+            budgeted_units = actual_units = remaining_units = 0.0
+            budgeted_cost = actual_cost = remaining_cost = 0.0
+            primary_resource = ''
+
             for res in self.resources:
-                if res.get('task_id') == task_id:
-                    budgeted_units += self._to_float(res.get('target_qty', '0'))
-                    actual_units += self._to_float(res.get('act_reg_qty', '0'))
-                    remaining_units += self._to_float(res.get('remain_qty', '0'))
-                    budgeted_cost += self._to_float(res.get('target_cost', '0'))
-                    actual_cost += self._to_float(res.get('act_reg_cost', '0'))
-                    remaining_cost += self._to_float(res.get('remain_cost', '0'))
-            
-            # If no resource data, use duration-based estimates
+                if str(res.get('task_id', '')) != task_id:
+                    continue
+                budgeted_units += self._to_float(res.get('target_qty', '0'))
+                actual_units += self._to_float(res.get('act_reg_qty', '0'))
+                remaining_units += self._to_float(res.get('remain_qty', '0'))
+                budgeted_cost += self._to_float(res.get('target_cost', '0'))
+                actual_cost += self._to_float(res.get('act_reg_cost', '0'))
+                remaining_cost += self._to_float(res.get('remain_cost', '0'))
+                if not primary_resource:
+                    primary_resource = resource_names.get(str(res.get('rsrc_id', '')), '')
+
             if budgeted_cost == 0 and orig_dur > 0:
-                budgeted_cost = orig_dur * 1000  # $1000/day estimate
+                budgeted_cost = orig_dur * 1000
                 actual_cost = actual_dur * 1000
                 remaining_cost = remain_dur * 1000
-            
-            # Earned Value = Budgeted Cost × Progress
+
             earned_value_cost = budgeted_cost * (progress_pct / 100.0)
-            
-            # Schedule % Complete (based on time elapsed)
-            schedule_pct = self._calculate_schedule_pct(
-                start_clean, end_clean, data_date
-            )
-            
-            # Performance % (Physical / Schedule)
+            schedule_pct = self._calculate_schedule_pct(start_clean, end_clean, data_date)
             performance_pct = (progress_pct / schedule_pct * 100) if schedule_pct > 0 else 0
-            
-            # Constraints
-            constraint_type = act.get('cstr_type', '')
-            constraint_date = act.get('cstr_date', '')
-            
-            # Activity classification
+
+            if total_float < 0: float_band = '4. Negative Float'
+            elif total_float == 0: float_band = '1. Critical (0)'
+            elif total_float <= 5: float_band = '2. Near Critical (1-5)'
+            elif total_float <= 15: float_band = '3. Low Float (6-15)'
+            elif total_float <= 44: float_band = '5. Normal (16-44)'
+            else: float_band = '6. High Float (>44)'
+
+            if orig_dur == 0: duration_band = '0. Milestone'
+            elif orig_dur <= 5: duration_band = '1. Short (1-5d)'
+            elif orig_dur <= 20: duration_band = '2. Medium (6-20d)'
+            elif orig_dur <= 44: duration_band = '3. Long (21-44d)'
+            else: duration_band = '4. Very Long (>44d)'
+
+            if progress_pct == 0: progress_band = '0. Not Started'
+            elif progress_pct < 25: progress_band = '1. 0-25%'
+            elif progress_pct < 50: progress_band = '2. 25-50%'
+            elif progress_pct < 75: progress_band = '3. 50-75%'
+            elif progress_pct < 100: progress_band = '4. 75-99%'
+            else: progress_band = '5. 100% Complete'
+
+            start_parsed = self._parse_date(start_str)
+            end_parsed = self._parse_date(end_str)
+            start_month = start_parsed.strftime('%Y-%m (%b)') if start_parsed else '(Unknown)'
+            start_quarter = f"{start_parsed.year} Q{(start_parsed.month-1)//3 + 1}" if start_parsed else '(Unknown)'
+            start_year = str(start_parsed.year) if start_parsed else '(Unknown)'
+            finish_month = end_parsed.strftime('%Y-%m (%b)') if end_parsed else '(Unknown)'
+            finish_quarter = f"{end_parsed.year} Q{(end_parsed.month-1)//3 + 1}" if end_parsed else '(Unknown)'
+            finish_year = str(end_parsed.year) if end_parsed else '(Unknown)'
+
             is_milestone = act.get('task_type') in ['TT_Mile', 'TT_FinMile']
             is_loe = act.get('task_type') == 'TT_LOE'
-            is_critical = act.get('is_critical', False)
+            is_critical = bool(act.get('is_critical', False))
             is_completed = act.get('status_code') == 'TK_Complete'
-            is_started = act.get('status_code') in ['TK_Active', 'TK_Complete']
-            
-            # Get predecessors
+
             pred_list = self.predecessors.get(task_id, [])
-            pred_display = []
-            for pred in pred_list[:5]:  # Show first 5
-                pred_act = self.activity_by_id.get(pred['task_id'], {})
-                pred_code = pred_act.get('task_code', '')
-                pred_type_short = pred['type'].replace('PR_', '')
-                lag_str = f"+{int(pred['lag_days'])}" if pred['lag_days'] > 0 else str(int(pred['lag_days'])) if pred['lag_days'] < 0 else ''
-                pred_display.append(f"{pred_code}{pred_type_short}{lag_str}")
-            
-            # Get successors
             succ_list = self.successors.get(task_id, [])
+            if not pred_list:
+                pred_list = self.predecessors.get(act.get('task_id', ''), [])
+            if not succ_list:
+                succ_list = self.successors.get(act.get('task_id', ''), [])
+
+            pred_display = []
+            for pred in pred_list[:5]:
+                pred_act = self.activity_by_id.get(pred['task_id'], {})
+                lag = pred.get('lag_days', 0) or 0
+                lag_str = f"+{int(lag)}" if lag > 0 else (str(int(lag)) if lag < 0 else '')
+                pred_display.append(f"{pred_act.get('task_code', '')}{str(pred.get('type', '')).replace('PR_', '')}{lag_str}")
+
             succ_display = []
             for succ in succ_list[:5]:
                 succ_act = self.activity_by_id.get(succ['task_id'], {})
-                succ_code = succ_act.get('task_code', '')
-                succ_type_short = succ['type'].replace('PR_', '')
-                lag_str = f"+{int(succ['lag_days'])}" if succ['lag_days'] > 0 else str(int(succ['lag_days'])) if succ['lag_days'] < 0 else ''
-                succ_display.append(f"{succ_code}{succ_type_short}{lag_str}")
-            
-            # Build task object with ALL P6 fields
+                lag = succ.get('lag_days', 0) or 0
+                lag_str = f"+{int(lag)}" if lag > 0 else (str(int(lag)) if lag < 0 else '')
+                succ_display.append(f"{succ_act.get('task_code', '')}{str(succ.get('type', '')).replace('PR_', '')}{lag_str}")
+
+            wbs_id = str(act.get('wbs_id', '') or '')
+            wbs_path_info = wbs_paths.get(wbs_id, {'full_path': 'Unassigned', 'levels': []})
+            wbs_levels = wbs_path_info.get('levels', [])
+            act_codes = activity_code_map.get(act.get('task_id', ''), {}) or activity_code_map.get(task_id, {})
+
+            parent_id = f"wbs_{wbs_id}" if wbs_id in wbs_with_content else 0
+
             task = {
-                # Identity
-                'id': task_id,
-                'activity_id': act.get('task_code', ''),
+                'id': task_id, 'activity_id': act.get('task_code', ''),
                 'text': act.get('task_name', ''),
-                
-                # WBS
-                'wbs': act.get('wbs_name', ''),
-                'wbs_code': act.get('wbs_code', ''),
-                
-                # Type & Status
-                'activity_type': act.get('type_text', ''),
-                'status': act.get('status_text', ''),
-                'is_milestone': is_milestone,
-                'is_loe': is_loe,
-                'is_critical': is_critical,
-                'is_completed': is_completed,
-                
-                # Durations
-                'start_date': start_clean,
-                'end_date': end_clean,
+                'wbs': act.get('wbs_name', ''), 'wbs_code': act.get('wbs_code', ''),
+                'wbs_id': wbs_id, 'wbs_path': wbs_path_info.get('full_path', 'Unassigned'),
+                'activity_codes': act_codes,
+                'activity_type': act.get('type_text', ''), 'status': act.get('status_text', ''),
+                'is_wbs': False, 'is_wbs_summary': False,
+                'is_milestone': is_milestone, 'is_loe': is_loe,
+                'is_critical': is_critical, 'is_completed': is_completed,
+                'critical_text': 'Critical' if is_critical else 'Non-Critical',
+                'start_date': start_clean, 'end_date': end_clean,
                 'original_duration': round(orig_dur, 1),
                 'remaining_duration': round(remain_dur, 1),
                 'actual_duration': round(actual_dur, 1),
                 'at_completion_duration': round(orig_dur, 1),
-                
-                # Dates - Early
                 'early_start': self._format_date(act.get('early_start_date', '')),
                 'early_finish': self._format_date(act.get('early_end_date', '')),
-                
-                # Dates - Late
                 'late_start': self._format_date(act.get('late_start_date', '')),
                 'late_finish': self._format_date(act.get('late_end_date', '')),
-                
-                # Dates - Actual
                 'actual_start': self._format_date(act.get('act_start_date', '')),
                 'actual_finish': self._format_date(act.get('act_end_date', '')),
-                
-                # Dates - Baseline
                 'baseline_start': self._format_date(act.get('target_start_date', '')),
                 'baseline_finish': self._format_date(act.get('target_end_date', '')),
-                
-                # Float
-                'total_float': round(act.get('total_float_days', 0), 1),
-                'free_float': round(act.get('free_float_days', 0), 1),
-                
-                # Progress
-                'progress': progress_pct / 100.0,  # DHTMLX needs 0-1
+                'total_float': round(total_float, 1),
+                'free_float': round(float(act.get('free_float_days', 0) or 0), 1),
+                'progress': progress_pct / 100.0,
                 'physical_percent': round(progress_pct, 1),
                 'schedule_percent': round(schedule_pct, 1),
                 'performance_percent': round(performance_pct, 1),
-                
-                # Resources & Cost
                 'budgeted_units': round(budgeted_units, 2),
                 'actual_units': round(actual_units, 2),
                 'remaining_units': round(remaining_units, 2),
@@ -978,361 +641,224 @@ class ScheduleEngine:
                 'earned_value': round(earned_value_cost, 2),
                 'at_completion_cost': round(actual_cost + remaining_cost, 2),
                 'variance_at_completion': round(budgeted_cost - (actual_cost + remaining_cost), 2),
-                
-                # Performance Indices
                 'spi': round(earned_value_cost / (budgeted_cost * (schedule_pct/100)) if (budgeted_cost * schedule_pct) > 0 else 0, 3),
                 'cpi': round(earned_value_cost / actual_cost if actual_cost > 0 else 0, 3),
-                
-                # Constraints
-                'constraint_type': self._format_constraint(constraint_type),
-                'constraint_date': self._format_date(constraint_date),
-                
-                # Logic
+                'constraint_type': self._format_constraint(act.get('cstr_type', '')),
+                'constraint_date': self._format_date(act.get('cstr_date', '')),
                 'predecessors': ', '.join(pred_display),
                 'successors': ', '.join(succ_display),
                 'predecessor_count': len(pred_list),
                 'successor_count': len(succ_list),
-                
-                # Calendar
                 'calendar': self._get_calendar_name(act.get('clndr_id', '')),
-                
-                # Custom classes for styling
+                'primary_resource': primary_resource or '(No Resource)',
+                'float_band': float_band, 'duration_band': duration_band, 'progress_band': progress_band,
+                'start_month': start_month, 'start_quarter': start_quarter, 'start_year': start_year,
+                'finish_month': finish_month, 'finish_quarter': finish_quarter, 'finish_year': finish_year,
                 'custom_class': self._get_task_class(is_critical, is_completed, is_milestone, is_loe),
-                
-                # For DHTMLX
                 'type': 'milestone' if is_milestone else 'task',
-                'parent': 0,
-                'open': True,
+                'parent': parent_id, 'open': True,
             }
-            
+            for i in range(12):
+                task[f'wbs_level_{i+1}'] = wbs_levels[i] if i < len(wbs_levels) else ''
             tasks.append(task)
-            
-            # Build links (dependencies)
+
+            groupable_values['status'].add(task['status'])
+            groupable_values['type'].add(task['activity_type'])
+            groupable_values['calendar'].add(task['calendar'])
+            groupable_values['critical'].add(task['critical_text'])
+            groupable_values['primary_resource'].add(task['primary_resource'])
+            groupable_values['float_band'].add(task['float_band'])
+            groupable_values['duration_band'].add(task['duration_band'])
+            groupable_values['progress_band'].add(task['progress_band'])
+            groupable_values['start_month'].add(task['start_month'])
+            groupable_values['start_quarter'].add(task['start_quarter'])
+            groupable_values['start_year'].add(task['start_year'])
+            groupable_values['finish_month'].add(task['finish_month'])
+            groupable_values['finish_quarter'].add(task['finish_quarter'])
+            groupable_values['finish_year'].add(task['finish_year'])
+
+            for code_type, code_value in act_codes.items():
+                groupable_values['activity_codes'].setdefault(code_type, set()).add(code_value)
+
             for pred in pred_list:
-                pred_id = pred['task_id']
-                if pred_id in [t['id'] for t in tasks]:
-                    link_type_map = {
-                        'PR_FS': '0',  # Finish-to-Start
-                        'PR_SS': '1',  # Start-to-Start
-                        'PR_FF': '2',  # Finish-to-Finish
-                        'PR_SF': '3',  # Start-to-Finish
-                    }
-                    links.append({
-                        'id': f"{pred_id}-{task_id}",
-                        'source': pred_id,
-                        'target': task_id,
-                        'type': link_type_map.get(pred['type'], '0'),
-                        'lag': pred['lag_days'],
-                    })
-        
+                pred_id = str(pred.get('task_id', ''))
+                if any(str(t['id']) == pred_id for t in tasks):
+                    link_type_map = {'PR_FS': '0', 'PR_SS': '1', 'PR_FF': '2', 'PR_SF': '3'}
+                    links.append({'id': f"{pred_id}-{task_id}", 'source': pred_id, 'target': task_id, 'type': link_type_map.get(pred.get('type'), '0'), 'lag': pred.get('lag_days', 0)})
+
+        # Combine & sanitize parents
+        all_tasks = wbs_summary_tasks + tasks
+        valid_ids = set(str(t['id']) for t in all_tasks)
+        for t in all_tasks:
+            p = t.get('parent', 0)
+            if p in (None, '', 0, '0'):
+                t['parent'] = 0
+            else:
+                p = str(p)
+                t['parent'] = p if p in valid_ids else 0
+            try:
+                if t.get('start_date') and t.get('end_date') and t['end_date'] < t['start_date']:
+                    t['end_date'] = t['start_date']
+            except:
+                pass
+
+        groupable_output = {}
+        for k, v in groupable_values.items():
+            if k == 'activity_codes':
+                groupable_output[k] = {kk: sorted(list(vv)) for kk, vv in v.items()}
+            else:
+                groupable_output[k] = sorted(list(v))
+
+        print(f"  📊 Gantt: {len(tasks)} activities, {len(wbs_summary_tasks)} WBS, {len(links)} links")
+
         return {
-            'tasks': tasks,
-            'links': links,
-            'total': len(tasks),
-            'critical_count': sum(1 for t in tasks if t['is_critical']),
+            'tasks': all_tasks, 'links': links,
+            'total': len(tasks), 'wbs_summary_count': len(wbs_summary_tasks),
+            'critical_count': sum(1 for t in tasks if t.get('is_critical')),
             'data_date': data_date.strftime('%Y-%m-%d') if data_date else '',
+            'groupable_values': groupable_output,
         }
 
+    # ═══════════════════════════════════════════════════════════
+    # HELPERS
+    # ═══════════════════════════════════════════════════════════
+
+    def _build_wbs_paths(self):
+        wbs_paths = {}
+        wbs_dict = {str(w.get('wbs_id', '')): w for w in self.wbs_nodes if w.get('wbs_id')}
+
+        def get_parent_id(w):
+            for key in ('parent_wbs_id', 'parent_id', 'parent_wbs', 'wbs_parent_id'):
+                val = w.get(key, '')
+                if val not in (None, '', '0', 0):
+                    return str(val)
+            return ''
+
+        def build_path(wbs_id, visited=None):
+            if visited is None:
+                visited = set()
+            wbs_id = str(wbs_id or '')
+            if not wbs_id or wbs_id in visited:
+                return []
+            visited.add(wbs_id)
+            w = wbs_dict.get(wbs_id)
+            if not w:
+                return []
+            name = (w.get('wbs_name', '') or '').strip() or (w.get('wbs_short_name', '') or '').strip()
+            parent_id = get_parent_id(w)
+            if parent_id and parent_id in wbs_dict:
+                return build_path(parent_id, visited) + ([name] if name else [])
+            return [name] if name else []
+
+        for wbs_id in wbs_dict.keys():
+            levels = build_path(wbs_id)
+            wbs_paths[wbs_id] = {'full_path': ' > '.join(levels) if levels else 'Unassigned', 'levels': levels}
+        return wbs_paths
+
+    def _get_activity_code_map(self):
+        code_map = {}
+        code_types = {}
+        for row in self.raw_tables.get('ACTVTYPE', {}).get('rows', []):
+            code_types[row.get('actv_code_type_id', '')] = row.get('actv_code_type', 'Code')
+        code_values = {}
+        for row in self.raw_tables.get('ACTVCODE', {}).get('rows', []):
+            code_id = row.get('actv_code_id', '')
+            code_type_id = row.get('actv_code_type_id', '')
+            code_values[code_id] = {'type_id': code_type_id, 'type_name': code_types.get(code_type_id, 'Code'), 'value': (row.get('short_name', '') or '') + ' - ' + (row.get('actv_code_name', '') or '')}
+        for row in self.raw_tables.get('TASKACTV', {}).get('rows', []):
+            task_id = row.get('task_id', '')
+            code_id = row.get('actv_code_id', '')
+            if code_id in code_values:
+                code_map.setdefault(task_id, {})[code_values[code_id]['type_name']] = code_values[code_id]['value']
+        return code_map
+
     def _clean_date_for_gantt(self, date_string):
-        """Convert P6 date to YYYY-MM-DD."""
         if not date_string:
             return None
         parsed = self._parse_date(date_string)
-        if parsed:
-            return parsed.strftime('%Y-%m-%d')
-        return None
+        return parsed.strftime('%Y-%m-%d') if parsed else None
 
     def _format_date(self, date_string):
-        """Format date as DD-MMM-YY (P6 style)."""
         if not date_string:
             return ''
         parsed = self._parse_date(date_string)
-        if parsed:
-            return parsed.strftime('%d-%b-%y')
-        return ''
+        return parsed.strftime('%d-%b-%y') if parsed else ''
 
     def _format_constraint(self, cstr_type):
-        """Convert constraint code to readable name."""
-        mapping = {
-            'CS_MSO': 'Start On',
-            'CS_MSOA': 'Start On or After',
-            'CS_MSOB': 'Start On or Before',
-            'CS_MEO': 'Finish On',
-            'CS_MEOA': 'Finish On or After',
-            'CS_MEOB': 'Finish On or Before',
-            'CS_MANDSTART': 'Mandatory Start',
-            'CS_MANDFIN': 'Mandatory Finish',
-            'CS_ALAP': 'As Late As Possible',
-        }
-        return mapping.get(cstr_type, '')
+        return {'CS_MSO': 'Start On', 'CS_MSOA': 'Start On or After', 'CS_MSOB': 'Start On or Before', 'CS_MEO': 'Finish On', 'CS_MEOA': 'Finish On or After', 'CS_MEOB': 'Finish On or Before', 'CS_MANDSTART': 'Mandatory Start', 'CS_MANDFIN': 'Mandatory Finish', 'CS_ALAP': 'As Late As Possible'}.get(cstr_type, '')
 
     def _get_calendar_name(self, clndr_id):
-        """Get calendar name from ID."""
-        cal = self.calendars.get(clndr_id, {})
-        return cal.get('clndr_name', 'Default')
+        return self.calendars.get(clndr_id, {}).get('clndr_name', 'Default')
 
     def _get_task_class(self, is_critical, is_completed, is_milestone, is_loe):
-        """Determine CSS class for task styling."""
-        if is_completed:
-            return 'gantt-completed'
-        if is_milestone:
-            return 'gantt-milestone-critical' if is_critical else 'gantt-milestone-normal'
-        if is_loe:
-            return 'gantt-loe'
-        if is_critical:
-            return 'gantt-critical'
+        if is_completed: return 'gantt-completed'
+        if is_milestone: return 'gantt-milestone-critical' if is_critical else 'gantt-milestone-normal'
+        if is_loe: return 'gantt-loe'
+        if is_critical: return 'gantt-critical'
         return 'gantt-normal'
 
     def _calculate_schedule_pct(self, start, end, data_date):
-        """Calculate schedule % complete based on time elapsed."""
         try:
-            from datetime import datetime
-            start_dt = datetime.strptime(start, '%Y-%m-%d')
-            end_dt = datetime.strptime(end, '%Y-%m-%d')
-            
-            if not data_date:
-                return 0
-            
-            if data_date <= start_dt:
-                return 0
-            if data_date >= end_dt:
-                return 100
-            
-            total = (end_dt - start_dt).days
-            elapsed = (data_date - start_dt).days
-            
-            if total > 0:
-                return (elapsed / total) * 100
-            return 0
+            s = datetime.strptime(start, '%Y-%m-%d')
+            e = datetime.strptime(end, '%Y-%m-%d')
+            if not data_date: return 0
+            if data_date <= s: return 0
+            if data_date >= e: return 100
+            total = (e - s).days
+            elapsed = (data_date - s).days
+            return (elapsed / total) * 100 if total > 0 else 0
         except:
             return 0
 
     def _get_project_data_date(self):
-        """Get the project's data date."""
         if not self.projects:
             return None
-        proj = self.projects[0]
-        return self._parse_date(proj.get('last_recalc_date', ''))
-    def _clean_date_for_gantt(self, date_string):
-        """
-        Convert P6 date format to YYYY-MM-DD.
-        
-        P6 dates come as '2024-01-15 08:00' or similar.
-        Gantt library needs just '2024-01-15'.
-        """
-        if not date_string:
+        return self._parse_date(self.projects[0].get('last_recalc_date', ''))
+
+    def _to_float(self, value):
+        try:
+            return float(value)
+        except:
+            return 0.0
+
+    def _parse_date(self, date_string):
+        if not date_string or not str(date_string).strip():
             return None
-        
-        # Try to parse and reformat
-        parsed = self._parse_date(date_string)
-        if parsed:
-            return parsed.strftime('%Y-%m-%d')
+        for fmt in ['%Y-%m-%d %H:%M', '%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%m/%d/%Y', '%m/%d/%Y %H:%M']:
+            try:
+                return datetime.strptime(str(date_string).strip(), fmt)
+            except ValueError:
+                continue
         return None
-    
-    def _get_project_info(self):
-        """Get basic project header info."""
-        if not self.projects:
-            return {'name': 'Unknown', 'start': '', 'finish': ''}
-        
-        proj = self.projects[0]
-        return {
-            'name': proj.get('proj_short_name', 'Unnamed Project'),
-            'start': proj.get('plan_start_date', ''),
-            'finish': proj.get('plan_end_date', ''),
-            'data_date': proj.get('last_recalc_date', ''),
-        }
 
-    def _get_summary_cards(self):
-        """Get numbers for the top summary cards."""
-        stats = self.schedule_stats
-        total_checks = sum(1 for r in self.dcma_results.values() 
-                          if r.get('pass') is not None)
-        passed_checks = sum(1 for r in self.dcma_results.values() 
-                           if r.get('pass') is True)
-        
-        return [
-            {
-                'label': 'Total Activities',
-                'value': stats.get('total_activities', 0),
-                'icon': '📌',
-                'color': 'blue'
-            },
-            {
-                'label': 'Critical Activities',
-                'value': stats.get('critical_count', 0),
-                'icon': '🔴',
-                'color': 'red'
-            },
-            {
-                'label': 'Completed',
-                'value': stats.get('completed', 0),
-                'icon': '✅',
-                'color': 'green'
-            },
-            {
-                'label': 'In Progress',
-                'value': stats.get('in_progress', 0),
-                'icon': '🔄',
-                'color': 'orange'
-            },
-            {
-                'label': 'Relationships',
-                'value': stats.get('total_relationships', 0),
-                'icon': '🔗',
-                'color': 'purple'
-            },
-            {
-                'label': 'DCMA Score',
-                'value': f"{passed_checks}/{total_checks}",
-                'icon': '🏥',
-                'color': 'teal'
-            },
-        ]
+    def find_activity(self, search_term):
+        s = search_term.lower()
+        return [a for a in self.activities if s in a.get('task_code', '').lower() or s in a.get('task_name', '').lower()]
 
-    def _get_status_distribution(self):
-        """Data for the status pie chart."""
-        stats = self.schedule_stats
-        return {
-            'labels': ['Not Started', 'In Progress', 'Completed'],
-            'values': [
-                stats.get('not_started', 0),
-                stats.get('in_progress', 0),
-                stats.get('completed', 0),
-            ],
-            'colors': ['#94a3b8', '#f59e0b', '#10b981']
-        }
-
-    def _get_float_distribution(self):
-        """Data for the float bar chart."""
-        stats = self.schedule_stats
-        return {
-            'labels': ['Negative Float', 'Zero Float (Critical)', 
-                      'Positive Float', 'High Float (>44d)'],
-            'values': [
-                stats.get('negative_float', 0),
-                stats.get('zero_float', 0),
-                stats.get('positive_float', 0) - stats.get('high_float_gt_44d', 0),
-                stats.get('high_float_gt_44d', 0),
-            ],
-            'colors': ['#dc2626', '#ef4444', '#3b82f6', '#f59e0b']
-        }
-
-    def _get_dcma_summary(self):
-        """DCMA results formatted for the dashboard."""
+    def get_predecessors(self, task_code):
+        act = self.activity_by_code.get(task_code)
+        if not act:
+            return []
         results = []
-        for check_name, result in self.dcma_results.items():
-            # Skip checks without pass/fail results
-            if result.get('pass') is None:
-                continue
-            
-            clean_name = check_name.replace('_', ' ').split(' ', 1)[1] \
-                        if '_' in check_name else check_name
-            
-            results.append({
-                'name': clean_name,
-                'value': f"{result.get('pct', 0)}%" if 'pct' in result 
-                        else str(result.get('value', '')),
-                'threshold': result.get('threshold', ''),
-                'pass': result.get('pass', False),
-                'count': result.get('count', 0),
-                'total': result.get('total', 0),
-            })
+        for pred in self.predecessors.get(act.get('task_id', ''), []):
+            pa = self.activity_by_id.get(pred['task_id'], {})
+            results.append({'code': pa.get('task_code', ''), 'name': pa.get('task_name', ''), 'type': pred['type'], 'lag': pred['lag_days']})
         return results
 
-    def _get_wbs_breakdown(self):
-        """Count activities per WBS for the WBS chart."""
-        wbs_counts = {}
-        for act in self.activities:
-            wbs = act.get('wbs_name', 'Unknown')
-            # Take just the first part of the WBS name for cleaner display
-            wbs_short = wbs[:30] + '...' if len(wbs) > 30 else wbs
-            wbs_counts[wbs_short] = wbs_counts.get(wbs_short, 0) + 1
-        
-        # Sort by count (biggest first) and take top 10
-        sorted_wbs = sorted(wbs_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-        
-        return {
-            'labels': [item[0] for item in sorted_wbs],
-            'values': [item[1] for item in sorted_wbs],
-        }
-
-    def _get_critical_activities_data(self):
-        """Critical activities formatted for the table."""
+    def get_successors(self, task_code):
+        act = self.activity_by_code.get(task_code)
+        if not act:
+            return []
         results = []
-        for act in self.critical_activities[:50]:  # Top 50
-            results.append({
-                'code': act.get('task_code', ''),
-                'name': act.get('task_name', ''),
-                'wbs': act.get('wbs_name', ''),
-                'duration': round(act.get('original_duration_days', 0), 1),
-                'float': round(act.get('total_float_days', 0), 1),
-                'status': act.get('status_text', ''),
-                'start': act.get('early_start_date', ''),
-                'finish': act.get('early_end_date', ''),
-            })
+        for succ in self.successors.get(act.get('task_id', ''), []):
+            sa = self.activity_by_id.get(succ['task_id'], {})
+            results.append({'code': sa.get('task_code', ''), 'name': sa.get('task_name', ''), 'type': succ['type'], 'lag': succ['lag_days']})
         return results
 
-    def _get_top_issues(self):
-        """Get the most important issues found."""
-        issues = []
-        
-        for check_name, result in self.dcma_results.items():
-            if result.get('pass') is False:
-                clean_name = check_name.replace('_', ' ').split(' ', 1)[1] \
-                            if '_' in check_name else check_name
-                
-                issues.append({
-                    'check': clean_name,
-                    'count': result.get('count', 0),
-                    'percentage': result.get('pct', 0),
-                    'severity': 'high' if result.get('pct', 0) > 15 else 'medium',
-                })
-        
-        # Sort by count (biggest issues first)
-        issues.sort(key=lambda x: x['count'], reverse=True)
-        return issues
-
-    def _get_activities_table_data(self):
-        """All activities formatted for the searchable table."""
-        results = []
-        for act in self.activities:
-            # Skip WBS summary activities
-            if act.get('task_type') == 'TT_WBS':
-                continue
-                
-            results.append({
-                'code': act.get('task_code', ''),
-                'name': act.get('task_name', ''),
-                'wbs': act.get('wbs_name', ''),
-                'type': act.get('type_text', ''),
-                'status': act.get('status_text', ''),
-                'duration': round(act.get('original_duration_days', 0), 1),
-                'remaining': round(act.get('remaining_duration_days', 0), 1),
-                'float': round(act.get('total_float_days', 0), 1),
-                'critical': act.get('is_critical', False),
-                'start': act.get('early_start_date', ''),
-                'finish': act.get('early_end_date', ''),
-                'progress': act.get('phys_complete_pct', '0'),
-            })
-        return results
-
-    def _get_timeline_data(self):
-        """Data for the schedule timeline/Gantt chart."""
-        results = []
-        for act in self.activities[:100]:  # First 100 for performance
-            if act.get('task_type') in ['TT_WBS', 'TT_LOE']:
-                continue
-            
-            start = act.get('early_start_date', '') or act.get('target_start_date', '')
-            finish = act.get('early_end_date', '') or act.get('target_end_date', '')
-            
-            if start and finish:
-                results.append({
-                    'code': act.get('task_code', ''),
-                    'name': act.get('task_name', '')[:40],
-                    'start': start,
-                    'finish': finish,
-                    'critical': act.get('is_critical', False),
-                    'progress': self._to_float(act.get('phys_complete_pct', '0')),
-                })
-        return results
+    def get_activities_dataframe(self):
+        try:
+            import pandas as pd
+            cols = ['task_code', 'task_name', 'wbs_code', 'wbs_name', 'status_text', 'type_text', 'original_duration_days', 'remaining_duration_days', 'total_float_days', 'free_float_days', 'is_critical', 'early_start_date', 'early_end_date', 'late_start_date', 'late_end_date', 'target_start_date', 'target_end_date', 'act_start_date', 'act_end_date', 'phys_complete_pct']
+            return pd.DataFrame([{c: a.get(c, '') for c in cols} for a in self.activities])
+        except ImportError:
+            return None

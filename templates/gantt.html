@@ -2,274 +2,136 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>P6 Gantt View - Schedule Analyzer</title>
-    
-    <!-- DHTMLX Gantt (Free Open-Source Version) -->
+    <title>P6 Gantt View</title>
     <link rel="stylesheet" href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css">
     <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
-    
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    
     <style>
-        /* ═══════════════════════════════════════════
-           P6-STYLE GANTT CHART
-           ═══════════════════════════════════════════ */
-        
         body { overflow: hidden; }
+        .gantt-page { display: flex; flex-direction: column; height: 100vh; }
+        .gantt-toolbar { background: white; padding: 0.5rem 1rem; border-bottom: 1px solid #e2e8f0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+        .toolbar-group { display: flex; gap: 0.25rem; padding-right: 0.75rem; border-right: 1px solid #e2e8f0; align-items: center; }
+        .toolbar-group:last-child { border-right: none; }
+        .toolbar-label { font-size: 0.8rem; color: #64748b; font-weight: 600; margin-right: 0.25rem; }
+        .tb-btn { padding: 0.4rem 0.7rem; background: white; border: 1px solid #cbd5e1; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+        .tb-btn:hover { background: #f1f5f9; }
+        .tb-btn.active { background: #3b82f6; color: white; border-color: #3b82f6; }
+        .tb-btn.success { background: #10b981; color: white; border-color: #059669; }
+        .tb-select { padding: 0.4rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 0.85rem; }
+        .gantt-container { flex: 1; width: 100%; position: relative; overflow: hidden; }
+        #ganttChart { width: 100%; height: 100%; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center; }
+        .modal-overlay.show { display: flex; }
+        .modal { background: white; border-radius: 8px; padding: 1.5rem; max-height: 90vh; overflow-y: auto; }
+        .modal.wide { width: 1000px; }
+        .modal.narrow { width: 550px; }
+        .modal h3 { margin-bottom: 0.75rem; border-bottom: 2px solid #dc2626; padding-bottom: 0.5rem; color: #dc2626; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid #e2e8f0; padding-top: 0.75rem; margin-top: 1rem; }
+        .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .group-info-bar { padding: 0.4rem 1rem; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; font-size: 0.8rem; color: #475569; display: flex; gap: 1rem; align-items: center; }
+        .group-badge { background: white; padding: 0.15rem 0.5rem; border-radius: 4px; border: 1px solid #cbd5e1; }
         
-        .gantt-page {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
+        /* WBS Summary Rows */
+        .gantt_row.gantt-wbs-summary { background: linear-gradient(to right, #1e293b, #334155) !important; color: white !important; font-weight: 700 !important; }
+        .gantt_row.gantt-wbs-summary .gantt_cell, .gantt_row.gantt-wbs-summary .gantt_tree_content { background: transparent !important; color: white !important; }
+        .gantt_task_line[class*="gantt-wbs-l"] { border-radius: 0 !important; }
+        .gantt_task_line.gantt-wbs-l1 { background: #0f172a !important; }
+        .gantt_task_line.gantt-wbs-l2 { background: #1e293b !important; }
+        .gantt_task_line.gantt-wbs-l3 { background: #334155 !important; }
+        .gantt_task_line.gantt-wbs-l4 { background: #475569 !important; }
+        .gantt_task_line.gantt-wbs-l5 { background: #64748b !important; }
+        .gantt_task_line.gantt-wbs-l6 { background: #94a3b8 !important; }
+        .gantt_task_line[class*="gantt-wbs-l"][class*="l7"], .gantt_task_line[class*="gantt-wbs-l"][class*="l8"], .gantt_task_line[class*="gantt-wbs-l"][class*="l9"] { background: #cbd5e1 !important; color: #000; }
         
-        .gantt-toolbar {
-            background: white;
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #e2e8f0;
-            display: flex;
-            gap: 0.5rem;
-            align-items: center;
-            flex-wrap: wrap;
-        }
+        /* Group rows */
+        .gantt_row.gantt-group-l1 { background: var(--group-color-1, #1e40af) !important; color: white !important; font-weight: 700 !important; }
+        .gantt_row.gantt-group-l2 { background: var(--group-color-2, #059669) !important; color: white !important; }
+        .gantt_row.gantt-group-l3 { background: var(--group-color-3, #EAB308) !important; color: white !important; }
+        .gantt_row.gantt-group-l4 { background: var(--group-color-4, #DC2626) !important; color: white !important; }
+        .gantt_row.gantt-group-l5 { background: var(--group-color-5, #7C3AED) !important; color: white !important; }
+        [class*="gantt-group-l"] .gantt_cell, [class*="gantt-group-l"] .gantt_tree_content { background: transparent !important; color: white !important; }
         
-        .toolbar-group {
-            display: flex;
-            gap: 0.25rem;
-            padding-right: 0.75rem;
-            border-right: 1px solid #e2e8f0;
-        }
+        /* Activity bars */
+        .gantt_task_line.gantt-critical { background-color: #dc2626 !important; border-color: #991b1b; }
+        .gantt_task_line.gantt-completed { background-color: #10b981 !important; }
+        .gantt_task_line.gantt-normal { background-color: #3b82f6 !important; }
+        .gantt_row.critical-row { background-color: #fef2f2; }
         
-        .toolbar-group:last-child {
-            border-right: none;
-        }
+        .gantt_grid_head_cell { font-weight: 600 !important; background: #f8fafc !important; }
         
-        .tb-btn {
-            padding: 0.4rem 0.7rem;
-            background: white;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3rem;
-        }
-        
-        .tb-btn:hover {
-            background: #f1f5f9;
-        }
-        
-        .tb-btn.active {
-            background: #3b82f6;
-            color: white;
-            border-color: #3b82f6;
-        }
-        
-        .gantt-container {
-            flex: 1;
-            width: 100%;
-            position: relative;
-        }
-        
-        #ganttChart {
-            width: 100%;
-            height: 100%;
-        }
-        
-        /* Column selector modal */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
-            z-index: 9999;
-            justify-content: center;
-            align-items: center;
-        }
-        
-        .modal-overlay.show {
-            display: flex;
-        }
-        
-        .modal {
-            background: white;
-            border-radius: 8px;
-            padding: 1.5rem;
-            width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        .modal h3 {
-            margin-bottom: 1rem;
-            border-bottom: 1px solid #e2e8f0;
-            padding-bottom: 0.5rem;
-        }
-        
-        .column-list {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-        
-        .column-item {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.4rem;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        
-        .column-item:hover {
-            background: #f1f5f9;
-        }
-        
-        .modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 0.5rem;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 1rem;
-        }
-        
-        /* DHTMLX Gantt Customization - P6 Style */
-        .gantt_task_line.gantt-critical {
-            background-color: #dc2626;
-            border-color: #991b1b;
-        }
-        .gantt_task_line.gantt-critical .gantt_task_progress {
-            background-color: #7f1d1d;
-        }
-        
-        .gantt_task_line.gantt-completed {
-            background-color: #10b981;
-            border-color: #059669;
-        }
-        .gantt_task_line.gantt-completed .gantt_task_progress {
-            background-color: #065f46;
-        }
-        
-        .gantt_task_line.gantt-normal {
-            background-color: #3b82f6;
-            border-color: #1e40af;
-        }
-        .gantt_task_line.gantt-normal .gantt_task_progress {
-            background-color: #1e3a8a;
-        }
-        
-        .gantt_task_line.gantt-loe {
-            background-color: #94a3b8;
-            border-color: #64748b;
-            opacity: 0.7;
-        }
-        
-        /* Milestone styling */
-        .gantt_task_line.gantt-milestone-critical .gantt_milestone_content {
-            background: #dc2626;
-        }
-        .gantt_task_line.gantt-milestone-normal .gantt_milestone_content {
-            background: #f59e0b;
-        }
-        
-        /* Grid header styling */
-        .gantt_grid_head_cell {
-            font-weight: 600 !important;
-            background: #f8fafc !important;
-            color: #1e293b !important;
-        }
-        
-        .gantt_row.gantt_selected {
-            background-color: #dbeafe !important;
-        }
-        
-        /* Critical row highlight */
-        .gantt_row.critical-row {
-            background-color: #fef2f2;
-        }
-        
-        /* Loading */
-        .loading-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.9);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
+        .p6-section { background: white; border: 1px solid #cbd5e1; border-radius: 4px; padding: 0.75rem; margin-bottom: 0.75rem; }
+        .p6-section-title { background: #1e293b; color: white; padding: 0.35rem 0.75rem; margin: -0.75rem -0.75rem 0.75rem; font-weight: 700; font-size: 0.85rem; }
+        .p6-group-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .p6-group-table th { background: #3b82f6; color: white; padding: 0.4rem; text-align: left; }
+        .p6-group-table td { border: 1px solid #e2e8f0; padding: 0.25rem 0.4rem; }
+        .p6-group-table select { width: 100%; padding: 0.2rem; }
     </style>
 </head>
 <body>
     <div class="gantt-page">
-        
-        <!-- Header -->
-        <header class="app-header" style="padding: 0.75rem 1.5rem;">
+        <header class="app-header" style="padding: 0.5rem 1.5rem;">
             <div class="header-content">
                 <div class="logo-section">
                     <span class="logo-icon">📊</span>
-                    <div>
-                        <h1 style="font-size: 1.2rem;">P6 Gantt View</h1>
-                    </div>
+                    <div><h1 style="font-size: 1.1rem;">P6 Gantt View</h1></div>
                 </div>
                 <div class="header-actions">
                     <a href="/" class="btn btn-secondary">← Dashboard</a>
                     <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
                     <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+                    <a href="/health" class="btn btn-secondary">🏥 Health</a>
                 </div>
             </div>
         </header>
 
-        <!-- Toolbar -->
         <div class="gantt-toolbar">
             <div class="toolbar-group">
-                <button class="tb-btn" onclick="showColumnSelector()">
-                    📋 Columns
-                </button>
+                <button class="tb-btn" onclick="showColumnSelector()">📋 Columns</button>
+                <button class="tb-btn" onclick="showGroupModal()">🗂️ Group & Sort</button>
+            </div>
+            <div class="toolbar-group">
                 <button class="tb-btn" onclick="expandAll()">➕ Expand</button>
                 <button class="tb-btn" onclick="collapseAll()">➖ Collapse</button>
+                <button class="tb-btn" onclick="toggleWbsSummary()"><span id="wbsSummaryBtn">🌳 WBS Only</span></button>
             </div>
-            
             <div class="toolbar-group">
-                <span style="font-size: 0.85rem; color: #64748b;">Zoom:</span>
-                <button class="tb-btn" onclick="setZoom('hour')">Hour</button>
-                <button class="tb-btn" onclick="setZoom('day')">Day</button>
-                <button class="tb-btn active" onclick="setZoom('week')">Week</button>
-                <button class="tb-btn" onclick="setZoom('month')">Month</button>
-                <button class="tb-btn" onclick="setZoom('quarter')">Quarter</button>
-                <button class="tb-btn" onclick="setZoom('year')">Year</button>
-            </div>
-            
-            <div class="toolbar-group">
-                <button class="tb-btn" onclick="toggleBaseline()">
-                    <span id="baselineBtn">📊 Baseline</span>
-                </button>
-                <button class="tb-btn" onclick="toggleCritical()">
-                    <span id="criticalBtn">🔴 Critical Only</span>
-                </button>
-            </div>
-            
-            <div class="toolbar-group">
-                <label style="font-size: 0.85rem;">Max Activities:</label>
-                <select onchange="reloadData(this.value)" style="padding: 0.4rem; border-radius: 4px;">
-                    <option value="100">100</option>
-                    <option value="250">250</option>
-                    <option value="500" selected>500</option>
-                    <option value="1000">1000</option>
-                    <option value="2000">2000</option>
+                <span class="toolbar-label">Timescale:</span>
+                <select class="tb-select" id="timescaleSelect" onchange="setZoom(this.value)">
+                    <option value="day">Day</option>
+                    <option value="week" selected>Week</option>
+                    <option value="month">Month</option>
+                    <option value="quarter">Quarter</option>
+                    <option value="year">Year</option>
+                    <option value="year_quarter">Year + Quarter</option>
+                    <option value="year_month">Year + Month</option>
+                    <option value="year_quarter_month">Year + Quarter + Month</option>
+                    <option value="quarter_month">Quarter + Month</option>
                 </select>
             </div>
-            
+            <div class="toolbar-group">
+                <button class="tb-btn" onclick="toggleCritical()"><span id="criticalBtn">🔴 Critical Only</span></button>
+                <button class="tb-btn" onclick="scrollToToday()">📅 Today</button>
+                <button class="tb-btn" onclick="fitAll()">↔️ Fit All</button>
+            </div>
+            <div class="toolbar-group">
+                <span class="toolbar-label">Max:</span>
+                <select class="tb-select" onchange="reloadData(this.value)">
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                    <option value="2000" selected>2000</option>
+                    <option value="5000">5000</option>
+                </select>
+            </div>
             <div class="toolbar-group" style="margin-left: auto;">
-                <span id="statsDisplay" style="font-size: 0.85rem; color: #64748b;">
-                    Loading...
-                </span>
+                <span id="statsDisplay" style="font-size: 0.8rem; color: #64748b;">Loading...</span>
             </div>
         </div>
 
-        <!-- Gantt Container -->
+        <div class="group-info-bar" id="groupInfoBar" style="display:none;">
+            <strong>Grouped by:</strong> <span id="groupBadges"></span>
+            <strong>Sorted:</strong> <span id="sortInfo"></span>
+        </div>
+
         <div class="gantt-container">
             <div id="loadingOverlay" class="loading-overlay">
                 <div style="text-align: center;">
@@ -281,24 +143,40 @@
         </div>
     </div>
 
-    <!-- Column Selector Modal -->
     <div class="modal-overlay" id="columnModal">
-        <div class="modal">
-            <h3>📋 Select Columns to Display</h3>
-            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 1rem;">
-                Choose which columns appear in the Gantt grid.
-            </p>
-            
-            <div class="column-list" id="columnList">
-                <!-- Populated by JS -->
-            </div>
-            
+        <div class="modal narrow">
+            <h3>📋 Select Columns</h3>
+            <div id="columnList" style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; margin-bottom:1rem;"></div>
             <div class="modal-actions">
-                <button class="tb-btn" onclick="selectAllColumns(true)">Select All</button>
-                <button class="tb-btn" onclick="selectAllColumns(false)">Clear All</button>
-                <button class="tb-btn" onclick="resetColumns()">Reset Default</button>
-                <button class="tb-btn active" onclick="applyColumns()">Apply</button>
-                <button class="tb-btn" onclick="closeColumnSelector()">Cancel</button>
+                <button class="tb-btn" onclick="selectAllColumns(true)">All</button>
+                <button class="tb-btn" onclick="selectAllColumns(false)">None</button>
+                <button class="tb-btn" onclick="resetColumns()">Default</button>
+                <button class="tb-btn success" onclick="applyColumns()">Apply</button>
+                <button class="tb-btn" onclick="closeModal('columnModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="groupModal">
+        <div class="modal wide">
+            <h3>🗂️ Group and Sort</h3>
+            <div class="p6-section">
+                <div class="p6-section-title">Group By (up to 12 levels)</div>
+                <table class="p6-group-table">
+                    <thead><tr><th>Level</th><th>Group By</th><th>Indent</th><th>To Level</th><th>Interval</th><th>Page Brk</th><th>Font & Color</th></tr></thead>
+                    <tbody id="groupByTableBody"></tbody>
+                </table>
+            </div>
+            <div class="p6-section">
+                <div class="p6-section-title">Presets</div>
+                <button class="tb-btn" onclick="applyPreset('wbs')">📁 Full WBS (12 levels)</button>
+                <button class="tb-btn" onclick="applyPreset('status')">📊 Status</button>
+                <button class="tb-btn" onclick="applyPreset('critical')">🔴 Critical</button>
+                <button class="tb-btn" onclick="applyPreset('type')">🎯 Type</button>
+            </div>
+            <div class="modal-actions">
+                <button class="tb-btn success" onclick="applyGroupConfig()">Apply</button>
+                <button class="tb-btn" onclick="closeModal('groupModal')">Cancel</button>
             </div>
         </div>
     </div>
