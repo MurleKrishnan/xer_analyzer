@@ -2,291 +2,328 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Schedule Health Analytics - P6 Analyzer</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schedule Health | {{ config.app_title }}</title>
+
+    <!-- Dynamic theme from config.py -->
     <style>
-        .health-hero {
-            background: linear-gradient(135deg, #1e40af, #7c3aed);
-            color: white;
-            padding: 2rem;
-            border-radius: 12px;
-            margin-bottom: 2rem;
+        :root {
+            --color-primary: {{ config.theme.primary }};
+            --color-primary-dark: {{ config.theme.primary_dark }};
+            --color-accent: {{ config.theme.accent }};
+            --color-success: {{ config.theme.success }};
+            --color-warning: {{ config.theme.warning }};
+            --color-danger: {{ config.theme.danger }};
+            --color-bg: {{ config.theme.bg }};
+            --color-surface: {{ config.theme.surface }};
+            --color-text: {{ config.theme.text }};
+            --color-muted: {{ config.theme.muted }};
+            --color-border: {{ config.theme.border }};
         }
-        
-        .standard-selector {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            margin-bottom: 2rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        
-        .standard-btns {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-        
-        .std-select-btn {
-            padding: 1rem;
-            background: white;
-            border: 2px solid #cbd5e1;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: center;
-        }
-        
-        .std-select-btn:hover {
-            border-color: #3b82f6;
-            transform: translateY(-2px);
-        }
-        
-        .std-select-btn.active {
-            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-            color: white;
-            border-color: #3b82f6;
-        }
-        
-        .std-btn-name {
+    </style>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+    <style>
+        a.btn { text-decoration: none; }
+        .app-header .btn-secondary[aria-current="page"] {
+            background: rgba(255,255,255,0.4);
+            border-color: #fff;
             font-weight: 700;
-            font-size: 1.1rem;
         }
-        
-        .std-btn-desc {
+
+        /* Standard selector */
+        .std-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1.25rem;
+        }
+        .std-select-btn {
+            padding: 0.45rem 0.9rem;
+            border-radius: 999px;
+            border: 1px solid var(--color-border, #e2e8f0);
+            background: var(--color-surface, #fff);
+            color: var(--color-text, #1e293b);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .std-select-btn:hover {
+            border-color: var(--color-accent, #3b82f6);
+            color: var(--color-accent, #3b82f6);
+        }
+        .std-select-btn.active {
+            background: var(--color-primary, #1e40af);
+            border-color: var(--color-primary, #1e40af);
+            color: #fff;
+        }
+
+        /* Overall score hero */
+        .health-hero {
+            background: var(--color-surface, #fff);
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.25rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: grid;
+            grid-template-columns: minmax(160px, 220px) 1fr;
+            gap: 1.5rem;
+            align-items: center;
+        }
+        @media (max-width: 768px) {
+            .health-hero { grid-template-columns: 1fr; text-align: center; }
+        }
+        .score-ring {
+            text-align: center;
+            padding: 1rem;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #eff6ff, #f8fafc);
+            border: 1px solid var(--color-border, #e2e8f0);
+        }
+        .score-ring .big {
+            font-size: 3rem;
+            font-weight: 800;
+            color: var(--color-primary, #1e40af);
+            line-height: 1.1;
+        }
+        .score-ring .sub {
+            font-size: 0.85rem;
+            color: var(--color-muted, #64748b);
+        }
+        .hero-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 0.75rem;
+        }
+        .hero-stat {
+            background: #f8fafc;
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 8px;
+            padding: 0.75rem;
+        }
+        .hero-stat .val {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--color-text, #1e293b);
+        }
+        .hero-stat .lbl {
             font-size: 0.75rem;
-            margin-top: 0.25rem;
-            opacity: 0.85;
+            color: var(--color-muted, #64748b);
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
         }
-        
+        .hero-stat.danger .val { color: var(--color-danger, #dc2626); }
+
+        /* Per-standard score cards */
         .score-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 0.85rem;
+            margin-bottom: 1.5rem;
         }
-        
         .std-score-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            border-top: 4px solid;
-            text-align: center;
+            background: var(--color-surface, #fff);
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 10px;
+            padding: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: transform 0.15s, box-shadow 0.15s;
+            border-top: 4px solid #94a3b8;
         }
-        
+        .std-score-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+        }
         .std-score-card.green { border-top-color: #10b981; }
         .std-score-card.blue { border-top-color: #3b82f6; }
         .std-score-card.orange { border-top-color: #f59e0b; }
         .std-score-card.red { border-top-color: #dc2626; }
-        
         .std-score-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #1e293b;
+            font-size: 1.75rem;
+            font-weight: 800;
+            margin: 0.25rem 0;
+            color: var(--color-text, #1e293b);
         }
-        
         .std-score-grade {
             display: inline-block;
-            padding: 0.2rem 0.75rem;
-            border-radius: 12px;
+            padding: 0.15rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
             font-weight: 700;
-            font-size: 0.85rem;
-            margin-top: 0.5rem;
+            margin-bottom: 0.35rem;
         }
-        
         .grade-A { background: #d1fae5; color: #065f46; }
         .grade-B { background: #dbeafe; color: #1e40af; }
         .grade-C { background: #fef3c7; color: #92400e; }
-        .grade-D { background: #fed7aa; color: #9a3412; }
+        .grade-D { background: #ffedd5; color: #9a3412; }
         .grade-F { background: #fee2e2; color: #991b1b; }
-        
         .std-score-details {
-            font-size: 0.85rem;
-            color: #64748b;
-            margin-top: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--color-muted, #64748b);
+            line-height: 1.4;
         }
-        
-        .action-btn-large {
-            padding: 1rem 2rem;
-            font-size: 1rem;
-            font-weight: 600;
-            border-radius: 8px;
-            border: none;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            transition: all 0.2s;
-        }
-        
-        .action-btn-large:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-        
-        .btn-pdf {
-            background: #dc2626;
-            color: white;
-        }
-        
-        .btn-executive {
-            background: #059669;
-            color: white;
-        }
-        
-        .btn-excel {
-            background: #0f766e;
-            color: white;
-        }
-        
-        .export-panel {
+
+        /* Toolbar / exports */
+        .health-toolbar {
             display: flex;
-            flex-direction: column;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.25rem;
+            padding: 0.85rem 1rem;
+            background: var(--color-surface, #fff);
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 10px;
+        }
+        .health-toolbar .left,
+        .health-toolbar .right {
+            display: flex;
+            flex-wrap: wrap;
             gap: 0.5rem;
-            min-width: 260px;
+            align-items: center;
         }
-        
-        .export-label {
-            font-size: 0.85rem;
-            color: white;
-            opacity: 0.9;
+        .health-toolbar label {
+            font-size: 0.8rem;
+            color: var(--color-muted, #64748b);
             font-weight: 600;
         }
-        
-        .severity-select {
-            padding: 0.6rem;
+        .health-toolbar select,
+        .filter-bar select,
+        .filter-bar input {
+            padding: 0.4rem 0.6rem;
+            border: 1px solid var(--color-border, #e2e8f0);
             border-radius: 6px;
-            border: none;
-            font-weight: 600;
-            font-size: 0.9rem;
-            cursor: pointer;
+            font-size: 0.85rem;
+            background: #fff;
         }
-        
+
+        /* Top actions */
+        .action-item {
+            display: flex;
+            gap: 0.85rem;
+            padding: 1rem;
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 10px;
+            background: #fff;
+            margin-bottom: 0.65rem;
+        }
+        .action-priority {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 50%;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 0.12rem 0.45rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-left: 0.25rem;
+            vertical-align: middle;
+        }
+        .badge-critical { background: #7f1d1d; color: #fff; }
+        .badge-high { background: #fee2e2; color: #991b1b; }
+        .badge-medium { background: #fef3c7; color: #92400e; }
+        .badge-low { background: #e2e8f0; color: #475569; }
+        .badge-info { background: #e2e8f0; color: #334155; }
+        .badge-std { background: #dbeafe; color: #1e40af; }
+
+        .recommendation-box {
+            margin-top: 0.5rem;
+            padding: 0.55rem 0.75rem;
+            background: #fffbeb;
+            border: 1px solid #f59e0b;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #92400e;
+        }
+
+        /* Filters + detail */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.65rem;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding: 0.75rem 1rem;
+            background: #f8fafc;
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 8px;
+        }
+        .filter-bar input[type="search"],
+        .filter-bar input[type="text"] {
+            min-width: 200px;
+            flex: 1;
+        }
+
         .category-section {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 12px;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            background: var(--color-surface, #fff);
+            border: 1px solid var(--color-border, #e2e8f0);
+            border-radius: 10px;
+            padding: 1rem 1.15rem;
+            margin-bottom: 1rem;
         }
-        
         .category-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 2px solid #e2e8f0;
+            align-items: flex-start;
+            gap: 1rem;
+            margin-bottom: 0.85rem;
+            padding-bottom: 0.65rem;
+            border-bottom: 1px solid var(--color-border, #e2e8f0);
         }
-        
+        .category-header h3 {
+            font-size: 1.05rem;
+            margin: 0;
+        }
         .category-stats {
             font-size: 0.85rem;
-            color: #64748b;
+            color: var(--color-muted, #64748b);
+            white-space: nowrap;
         }
-        
+
         .check-item {
-            padding: 1rem;
-            margin-bottom: 0.75rem;
-            border-radius: 8px;
-            border-left: 4px solid;
             display: flex;
-            gap: 1rem;
-            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.85rem;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            border: 1px solid var(--color-border, #e2e8f0);
+            background: #f8fafc;
         }
-        
-        .check-item.pass { border-left-color: #10b981; background: #f0fdf4; }
-        .check-item.fail { border-left-color: #dc2626; background: #fef2f2; }
-        .check-item.info { border-left-color: #3b82f6; background: #eff6ff; }
-        
-        .check-icon { font-size: 1.5rem; }
-        .check-content { flex: 1; }
-        
+        .check-item.pass { border-left: 4px solid #10b981; background: #f0fdf4; }
+        .check-item.fail { border-left: 4px solid #dc2626; background: #fef2f2; }
+        .check-item.info,
+        .check-item.na { border-left: 4px solid #94a3b8; background: #f8fafc; }
+        .check-icon { font-size: 1.1rem; line-height: 1.4; }
+        .check-content { flex: 1; min-width: 0; }
         .check-title {
             font-weight: 600;
             margin-bottom: 0.25rem;
             display: flex;
-            gap: 0.5rem;
-            align-items: center;
             flex-wrap: wrap;
-        }
-        
-        .badge {
-            padding: 0.15rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-        
-        .badge-critical { background: #7f1d1d; color: white; }
-        .badge-high { background: #dc2626; color: white; }
-        .badge-medium { background: #f59e0b; color: white; }
-        .badge-low { background: #64748b; color: white; }
-        .badge-info { background: #3b82f6; color: white; }
-        .badge-std { background: #1e293b; color: white; }
-        
-        .filter-bar {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-            margin-bottom: 1rem;
-        }
-        
-        .filter-bar select {
-            padding: 0.5rem;
-            border-radius: 6px;
-            border: 1px solid #cbd5e1;
-        }
-        
-        .top-actions {
-            background: linear-gradient(135deg, #fef3c7, #fed7aa);
-            padding: 1.5rem;
-            border-radius: 12px;
-            margin-bottom: 2rem;
-        }
-        
-        .action-item {
-            background: white;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 0.75rem;
-            display: flex;
-            gap: 1rem;
             align-items: center;
+            gap: 0.15rem;
         }
-        
-        .action-priority {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #dc2626;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            flex-shrink: 0;
-        }
-        
-        .recommendation-box {
-            background: #fffbeb;
-            border-left: 3px solid #f59e0b;
-            padding: 0.5rem 0.75rem;
-            border-radius: 4px;
-            font-size: 0.85rem;
-            margin-top: 0.5rem;
-        }
-        
-        .filter-hint {
-            font-size: 0.75rem;
-            color: white;
-            opacity: 0.75;
-            margin-top: -0.25rem;
-            font-style: italic;
+
+        .section-title {
+            font-size: 1.15rem;
+            margin: 1.25rem 0 0.75rem;
+            color: var(--color-text, #1e293b);
         }
     </style>
 </head>
@@ -294,172 +331,145 @@
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
-                <span class="logo-icon">🏥</span>
+                {% if config.use_logo_image %}
+                    <img src="{{ url_for('static', filename=config.logo_path) }}"
+                         alt="Logo" style="height: 45px;">
+                {% else %}
+                    <span class="logo-icon">🏥</span>
+                {% endif %}
                 <div>
-                    <h1>Schedule Health Analytics</h1>
-                    <p class="subtitle">622+ Metrics | DCMA | DOE | NASA | GAO | AACE | Industry</p>
+                    <h1>{{ config.app_title }} — Health</h1>
+                    <p class="subtitle">622+ metrics across DCMA, DOE, NASA, GAO, AACE &amp; Industry</p>
                 </div>
             </div>
             <div class="header-actions">
-                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
                 <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
-                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+                <a href="/evm" class="btn btn-secondary">📈 EVM</a>
+                <a href="/health" class="btn btn-secondary" aria-current="page">🏥 Health</a>
             </div>
         </div>
     </header>
 
     <main class="app-main">
-        
-        <!-- Standard Selector -->
-        <div class="standard-selector">
-            <h3>📋 Select Assessment Standard</h3>
-            <p style="color:#64748b; margin-bottom:0.5rem;">
-                Choose a specific standard for focused analysis, or run all 622+ checks together.
-            </p>
-            
-            <div class="standard-btns">
-                <div class="std-select-btn active" data-std="all" onclick="selectStandard('all')">
-                    <div class="std-btn-name">🎯 All Standards</div>
-                    <div class="std-btn-desc">Comprehensive analysis</div>
-                </div>
-                <div class="std-select-btn" data-std="DCMA" onclick="selectStandard('DCMA')">
-                    <div class="std-btn-name">DCMA</div>
-                    <div class="std-btn-desc">14-Point + Sub-metrics</div>
-                </div>
-                <div class="std-select-btn" data-std="DOE" onclick="selectStandard('DOE')">
-                    <div class="std-btn-name">DOE</div>
-                    <div class="std-btn-desc">PM-30 Assessment</div>
-                </div>
-                <div class="std-select-btn" data-std="NASA" onclick="selectStandard('NASA')">
-                    <div class="std-btn-name">NASA</div>
-                    <div class="std-btn-desc">NPR 7120.5 & Handbook</div>
-                </div>
-                <div class="std-select-btn" data-std="GAO" onclick="selectStandard('GAO')">
-                    <div class="std-btn-name">GAO</div>
-                    <div class="std-btn-desc">10 Best Practices</div>
-                </div>
-                <div class="std-select-btn" data-std="AACE" onclick="selectStandard('AACE')">
-                    <div class="std-btn-name">AACE</div>
-                    <div class="std-btn-desc">RP 29R/32R/37R</div>
-                </div>
-                <div class="std-select-btn" data-std="Industry" onclick="selectStandard('Industry')">
-                    <div class="std-btn-name">Industry</div>
-                    <div class="std-btn-desc">PMI, CII, ISO</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Loading -->
-        <div id="loadingMessage" style="text-align:center; padding:3rem;">
+        <!-- Loading / error (health.js replaces innerHTML on error) -->
+        <div id="loadingMessage" class="loading-screen" style="display:flex;">
             <div class="spinner"></div>
-            <p style="margin-top:1rem;">Running comprehensive health assessment...</p>
+            <p>Loading health analytics…</p>
         </div>
 
-        <!-- Results -->
+        <!-- Main dashboard -->
         <div id="healthContent" style="display:none;">
-            
-            <!-- Overall Score Hero -->
+
+            <!-- Standard selector -->
+            <div class="std-selector" role="tablist" aria-label="Health standard">
+                <button type="button" class="std-select-btn active" data-std="all">All Standards</button>
+                <button type="button" class="std-select-btn" data-std="DCMA">DCMA</button>
+                <button type="button" class="std-select-btn" data-std="DOE">DOE</button>
+                <button type="button" class="std-select-btn" data-std="NASA">NASA</button>
+                <button type="button" class="std-select-btn" data-std="GAO">GAO</button>
+                <button type="button" class="std-select-btn" data-std="AACE">AACE</button>
+                <button type="button" class="std-select-btn" data-std="Industry">Industry</button>
+            </div>
+
+            <!-- Hero score + KPIs -->
             <div class="health-hero">
-                <div style="display:flex; gap:2rem; align-items:center; flex-wrap:wrap;">
-                    <div style="text-align:center;">
-                        <div style="font-size:4rem; font-weight:700; line-height:1;" id="overallScore">--</div>
-                        <div style="font-size:0.9rem; opacity:0.9;">Overall Health Score</div>
+                <div class="score-ring">
+                    <div class="big" id="overallScore">--</div>
+                    <div class="sub">Overall score / 100</div>
+                    <div style="margin-top:0.75rem;">
+                        <div id="reportTitle" style="font-weight:700;font-size:1rem;">Assessment</div>
+                        <div id="reportSubtitle" style="font-size:0.85rem;color:#64748b;">—</div>
                     </div>
-                    
-                    <div style="flex:1;">
-                        <h2 id="reportTitle" style="margin-bottom:0.5rem;">Comprehensive Assessment</h2>
-                        <p style="opacity:0.9; margin-bottom:1rem;" id="reportSubtitle">
-                            Analysis based on all applicable standards
-                        </p>
-                        
-                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:1rem;">
-                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
-                                <div style="font-size:1.5rem; font-weight:700;" id="totalChecks">0</div>
-                                <div style="font-size:0.75rem;">Total Checks</div>
-                            </div>
-                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
-                                <div style="font-size:1.5rem; font-weight:700; color:#86efac;" id="passedChecks">0</div>
-                                <div style="font-size:0.75rem;">Passed</div>
-                            </div>
-                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
-                                <div style="font-size:1.5rem; font-weight:700; color:#fca5a5;" id="failedChecks">0</div>
-                                <div style="font-size:0.75rem;">Failed</div>
-                            </div>
-                            <div style="background:rgba(255,255,255,0.15); padding:0.75rem; border-radius:8px;">
-                                <div style="font-size:1.5rem; font-weight:700; color:#fca5a5;" id="criticalFailures">0</div>
-                                <div style="font-size:0.75rem;">Critical</div>
-                            </div>
-                        </div>
+                </div>
+                <div class="hero-stats">
+                    <div class="hero-stat">
+                        <div class="val" id="totalChecks">--</div>
+                        <div class="lbl">Total checks</div>
                     </div>
-                    
-                    <!-- Export Panel with Severity Filter -->
-                    <div class="export-panel">
-                        <label class="export-label">Severity Filter (applies to all exports):</label>
-                        <select id="excelSeverityFilter" class="severity-select">
-                            <option value="all">All Severities</option>
-                            <option value="critical">Critical Only</option>
-                            <option value="high">Critical + High</option>
-                            <option value="medium">Critical + High + Medium</option>
-                        </select>
-                        <div class="filter-hint">Applies to PDF and Excel exports below</div>
-                        
-                        <button class="action-btn-large btn-pdf" onclick="downloadPDF()">
-                            📄 Executive PDF
-                        </button>
-                        <button class="action-btn-large btn-executive" onclick="downloadActionsPDF()">
-                            📋 Action List PDF
-                        </button>
-                        <button class="action-btn-large btn-excel" onclick="downloadActionsExcel()">
-                            📊 Top Actions Excel
-                        </button>
+                    <div class="hero-stat">
+                        <div class="val" id="passedChecks">--</div>
+                        <div class="lbl">Passed</div>
+                    </div>
+                    <div class="hero-stat">
+                        <div class="val" id="failedChecks">--</div>
+                        <div class="lbl">Failed</div>
+                    </div>
+                    <div class="hero-stat danger">
+                        <div class="val" id="criticalFailures">--</div>
+                        <div class="lbl">Critical fails</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Standards Scorecards -->
-            <div id="standardsScorecards">
-                <h3 style="margin-bottom:1rem;">📊 Standards Compliance Scores</h3>
-                <div class="score-grid" id="scoreGrid"></div>
+            <!-- Export toolbar -->
+            <div class="health-toolbar">
+                <div class="left">
+                    <label for="excelSeverityFilter">Export severity</label>
+                    <select id="excelSeverityFilter" title="Applies to PDF and Excel exports and Top Actions list">
+                        <option value="all">All</option>
+                        <option value="critical">Critical only</option>
+                        <option value="high">Critical + High</option>
+                        <option value="medium">Critical + High + Medium</option>
+                    </select>
+                </div>
+                <div class="right">
+                    <button type="button" class="btn btn-primary" onclick="downloadPDF(event)">📄 Executive PDF</button>
+                    <button type="button" class="btn btn-secondary" onclick="downloadActionsPDF(event)" style="background:#334155;color:#fff;border:none;">📋 Actions PDF</button>
+                    <button type="button" class="btn btn-success" onclick="downloadActionsExcel(event)">⬇️ Actions Excel</button>
+                </div>
             </div>
 
-            <!-- Top Actions -->
-            <div class="top-actions" id="topActionsSection">
-                <h3 style="margin-bottom:1rem;">🎯 Top Priority Actions</h3>
+            <!-- Per-standard scores (clickable) -->
+            <h2 class="section-title">Standards scores</h2>
+            <p style="font-size:0.85rem;color:#64748b;margin:-0.35rem 0 0.75rem;">
+                Click a card to drill into that standard only.
+            </p>
+            <div id="scoreGrid" class="score-grid"></div>
+
+            <!-- Top priority actions -->
+            <div id="topActionsSection" style="display:none;">
+                <h2 class="section-title">Top priority actions</h2>
+                <p style="font-size:0.85rem;color:#64748b;margin:-0.35rem 0 0.75rem;">
+                    Filtered by export severity. Expand rows to see affected activities.
+                </p>
                 <div id="topActionsList"></div>
             </div>
 
-            <!-- Filter Bar -->
+            <!-- Detailed results -->
+            <h2 class="section-title">Detailed check results</h2>
             <div class="filter-bar">
-                <label>
-                    Status: 
-                    <select id="filterStatus" onchange="applyFilter()">
-                        <option value="all">All</option>
-                        <option value="fail">Failed Only</option>
-                        <option value="pass">Passed Only</option>
-                    </select>
-                </label>
-                <label>
-                    Severity: 
-                    <select id="filterSeverity" onchange="applyFilter()">
-                        <option value="all">All Severities</option>
-                        <option value="critical">Critical Only</option>
-                        <option value="high">High+</option>
-                        <option value="medium">Medium+</option>
-                    </select>
-                </label>
-                <label>
-                    Search: 
-                    <input type="text" id="filterSearch" oninput="applyFilter()" 
-                           placeholder="Search checks..." 
-                           style="padding:0.5rem; border-radius:6px; border:1px solid #cbd5e1;">
-                </label>
+                <label for="filterStatus">Status</label>
+                <select id="filterStatus">
+                    <option value="all">All</option>
+                    <option value="fail">Failed</option>
+                    <option value="pass">Passed</option>
+                    <option value="info">Info</option>
+                    <option value="na">N/A</option>
+                </select>
+
+                <label for="filterSeverity">Severity</label>
+                <select id="filterSeverity">
+                    <option value="all">All</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">Critical + High</option>
+                    <option value="medium">Crit + High + Med</option>
+                </select>
+
+                <label for="filterSearch">Search</label>
+                <input type="search" id="filterSearch" placeholder="Check ID or name…" autocomplete="off">
+
+                <button type="button" class="btn btn-outline" onclick="applyFilter()">Apply</button>
             </div>
 
-            <!-- Detailed Results -->
             <div id="detailedResults"></div>
         </div>
     </main>
+
+    <footer class="app-footer">
+        <p>&copy; {{ config.footer_year }} {{ config.company_name }} | {{ config.footer_text }}</p>
+    </footer>
 
     <script src="{{ url_for('static', filename='health.js') }}"></script>
 </body>

@@ -2,11 +2,33 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Compare Schedules - P6 Analyzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compare Schedules | {{ config.app_title }}</title>
+    
+    <!-- Chart.js & DataTables -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+
+    <!-- Dynamic Theme Overrides from config.py -->
+    <style>
+        :root {
+            --color-primary: {{ config.theme.primary }};
+            --color-primary-dark: {{ config.theme.primary_dark }};
+            --color-accent: {{ config.theme.accent }};
+            --color-success: {{ config.theme.success }};
+            --color-warning: {{ config.theme.warning }};
+            --color-danger: {{ config.theme.danger }};
+            --color-bg: {{ config.theme.bg }};
+            --color-surface: {{ config.theme.surface }};
+            --color-text: {{ config.theme.text }};
+            --color-muted: {{ config.theme.muted }};
+            --color-border: {{ config.theme.border }};
+        }
+    </style>
+    
+    <!-- App Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     
     <style>
@@ -18,9 +40,9 @@
         }
         
         .file-drop {
-            background: white;
-            border: 3px dashed #cbd5e1;
-            border-radius: 12px;
+            background: var(--color-surface, #ffffff);
+            border: 3px dashed var(--color-border, #cbd5e1);
+            border-radius: var(--radius-lg, 12px);
             padding: 2rem;
             text-align: center;
             cursor: pointer;
@@ -28,13 +50,13 @@
         }
         
         .file-drop:hover, .file-drop.dragover {
-            border-color: #3b82f6;
-            background: #eff6ff;
+            border-color: var(--color-accent, #3b82f6);
+            background: rgba(59, 130, 246, 0.05);
         }
         
         .file-drop.has-file {
-            border-color: #10b981;
-            background: #ecfdf5;
+            border-color: var(--color-success, #10b981);
+            background: rgba(16, 185, 129, 0.05);
         }
         
         .file-drop h3 {
@@ -53,30 +75,51 @@
             border-radius: 8px;
             font-size: 0.75rem;
             font-weight: 700;
+            display: inline-block;
         }
         
         .change-badge.high { background: #fee2e2; color: #991b1b; }
         .change-badge.medium { background: #fef3c7; color: #92400e; }
         .change-badge.low { background: #dbeafe; color: #1e40af; }
         
-        .delta-positive { color: #dc2626; font-weight: 600; }
-        .delta-negative { color: #10b981; font-weight: 600; }
+        .delta-positive { color: var(--color-danger, #dc2626); font-weight: 600; }
+        .delta-negative { color: var(--color-success, #10b981); font-weight: 600; }
+
+        a.btn { text-decoration: none; }
+        .app-header .btn-secondary[aria-current="page"] {
+            background: rgba(255, 255, 255, 0.4);
+            border-color: #ffffff;
+            font-weight: 700;
+        }
+
+        @media (max-width: 768px) {
+            .compare-upload {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
-                <span class="logo-icon">🔄</span>
+                {% if config.use_logo_image %}
+                    <img src="{{ url_for('static', filename=config.logo_path) }}" 
+                         alt="Logo" style="height: 45px;">
+                {% else %}
+                    <span class="logo-icon">🔄</span>
+                {% endif %}
                 <div>
-                    <h1>Schedule Comparison</h1>
+                    <h1>{{ config.app_title }} — Compare</h1>
                     <p class="subtitle">Baseline vs Current Analysis</p>
                 </div>
             </div>
             <div class="header-actions">
-                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
-                <a href="/evm" class="btn btn-secondary">📊 EVM</a>
+                <a href="/comparison" class="btn btn-secondary" aria-current="page">🔄 Compare</a>
+                <a href="/evm" class="btn btn-secondary">📈 EVM</a>
+                <a href="/health" class="btn btn-secondary">🏥 Health</a>
             </div>
         </div>
     </header>
@@ -85,41 +128,41 @@
         <!-- UPLOAD ZONE -->
         <div id="uploadSection">
             <h2>Upload Two XER Files to Compare</h2>
-            <p style="color:#64748b; margin-bottom:1rem;">
-                Compare a baseline schedule with an updated one to see what changed.
+            <p style="color:var(--color-muted, #64748b); margin-bottom:1rem;">
+                Compare a baseline schedule with an updated update to track slippage, added/deleted scope, and logic changes.
             </p>
             
             <div class="compare-upload">
                 <div class="file-drop" id="baselineDrop">
                     <h3>📊 Baseline</h3>
                     <p>Original / Approved Schedule</p>
-                    <p id="baselineFileName" style="margin-top:1rem; font-weight:600;"></p>
+                    <p id="baselineFileName" style="margin-top:1rem; font-weight:600; color:var(--color-accent, #3b82f6);"></p>
                     <input type="file" id="baselineInput" accept=".xer" style="display:none;">
                 </div>
                 
                 <div class="file-drop" id="currentDrop">
                     <h3>📈 Current</h3>
                     <p>Updated / Latest Schedule</p>
-                    <p id="currentFileName" style="margin-top:1rem; font-weight:600;"></p>
+                    <p id="currentFileName" style="margin-top:1rem; font-weight:600; color:var(--color-accent, #3b82f6);"></p>
                     <input type="file" id="currentInput" accept=".xer" style="display:none;">
                 </div>
             </div>
             
             <div style="text-align:center;">
                 <button id="compareBtn" class="btn btn-primary" disabled 
-                        style="padding: 1rem 3rem; font-size: 1.1rem;">
+                        style="padding: 0.85rem 3rem; font-size: 1.1rem;">
                     🔍 Compare Schedules
                 </button>
             </div>
         </div>
 
-        <!-- LOADING -->
-        <div id="loadingSection" style="display:none; text-align:center; padding:3rem;">
+        <!-- LOADING SPINNER -->
+        <div id="loadingSection" class="loading-screen" style="display:none;">
             <div class="spinner"></div>
             <p style="margin-top:1rem;">Comparing schedules...</p>
         </div>
 
-        <!-- RESULTS -->
+        <!-- RESULTS SECTION -->
         <div id="resultsSection" style="display:none;">
             <div class="file-info-bar">
                 <span>📊 Baseline: <strong id="baselineName">--</strong></span>
@@ -134,25 +177,43 @@
 
             <!-- Chart -->
             <div class="chart-card" style="margin-bottom:2rem;">
-                <h3>📊 Change Distribution</h3>
-                <div style="height: 300px;">
+                <h3>📊 Scope &amp; Variance Breakdown</h3>
+                <div style="height: 300px; position: relative;">
                     <canvas id="changeChart"></canvas>
                 </div>
             </div>
 
             <!-- Critical Path Changes -->
             <div class="dcma-section">
-                <h2>🔴 Critical Path Changes</h2>
+                <h2>🔴 Critical Path Shifts</h2>
                 <div class="charts-grid">
                     <div>
-                        <h3 style="color:#dc2626;">➕ Newly Critical</h3>
+                        <h3 style="color:var(--color-danger, #dc2626); margin-bottom: 0.75rem;">➕ Newly Critical</h3>
                         <div id="newlyCriticalList"></div>
                     </div>
                     <div>
-                        <h3 style="color:#10b981;">➖ No Longer Critical</h3>
+                        <h3 style="color:var(--color-success, #10b981); margin-bottom: 0.75rem;">➖ No Longer Critical</h3>
                         <div id="noLongerCriticalList"></div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Logic & Relationship Changes -->
+            <div class="dcma-section" id="relationshipSection" style="display:none;">
+                <h2>🔗 Logic &amp; Relationship Changes</h2>
+                <div class="comparison-summary" id="relSummaryCards"></div>
+                <table id="relChangedTable" class="data-table" style="margin-top: 1rem;">
+                    <thead>
+                        <tr>
+                            <th>Relationship (Pred → Succ)</th>
+                            <th>Baseline Type</th>
+                            <th>Current Type</th>
+                            <th>Baseline Lag</th>
+                            <th>Current Lag</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
 
             <!-- Changed Activities -->
@@ -212,6 +273,11 @@
             </div>
         </div>
     </main>
+
+    <!-- FOOTER -->
+    <footer class="app-footer">
+        <p>&copy; {{ config.footer_year }} {{ config.company_name }} | {{ config.footer_text }}</p>
+    </footer>
 
     <script src="{{ url_for('static', filename='comparison.js') }}"></script>
 </body>

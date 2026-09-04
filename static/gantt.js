@@ -1,5 +1,8 @@
 /*
-    P6 ENTERPRISE GANTT - Full WBS Hierarchy + Safe Parent Validation
+    P6 ENTERPRISE GANTT (Patched)
+    =============================
+    Full WBS hierarchy + safe parents + XSS-safe templates
+    + filtered links + native WBS preset + data_date fallbacks
 */
 
 const AVAILABLE_COLUMNS = {
@@ -68,17 +71,22 @@ const DEFAULT_LEVEL_COLORS = [
     { bgColor: '#831843', textColor: '#FFFFFF', fontSize: 10 },
 ];
 
-let selectedColumns = [...DEFAULT_COLUMNS];
+let selectedColumns = DEFAULT_COLUMNS.slice();
 let allTasks = [];
 let allLinks = [];
 let groupableValues = {};
 let showCriticalOnly = false;
 let showWbsOnly = false;
+let ganttDataDate = null;
 
 let groupConfig = {
     displayOptions: {
-        showGroupTotals: true, showGrandTotals: false, showSummariesOnly: false,
-        shrinkBands: true, hideEmpty: false, sortBandsAlpha: true,
+        showGroupTotals: true,
+        showGrandTotals: false,
+        showSummariesOnly: false,
+        shrinkBands: true,
+        hideEmpty: false,
+        sortBandsAlpha: true,
     },
     groupLevels: [],
     sort: { field: 'activity_id', order: 'asc' }
@@ -88,9 +96,59 @@ let filterConditions = [];
 let filterLogic = 'AND';
 let displayTasks = [];
 let currentZoom = 'week';
-let selectedGroupRowIndex = -1;
 
-document.addEventListener('DOMContentLoaded', function() {
+// ═══════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════
+
+function esc(s) {
+    if (s == null) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function fallbackDate() {
+    if (ganttDataDate && /^\d{4}-\d{2}-\d{2}/.test(String(ganttDataDate))) {
+        return String(ganttDataDate).slice(0, 10);
+    }
+    const d = new Date();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+}
+
+function ensureDates(t) {
+    const fb = fallbackDate();
+    if (!t.start_date) t.start_date = fb;
+    if (!t.end_date) t.end_date = t.start_date || fb;
+    if (t.end_date < t.start_date) t.end_date = t.start_date;
+    return t;
+}
+
+function visibleLinks(tasks) {
+    const ids = new Set((tasks || []).map(function (t) { return String(t.id); }));
+    return (allLinks || []).filter(function (l) {
+        return ids.has(String(l.source)) && ids.has(String(l.target));
+    });
+}
+
+function activeGroupingLevels() {
+    return (groupConfig.groupLevels || []).filter(function (g) { return g.field; });
+}
+
+function isNativeWbsMode() {
+    return activeGroupingLevels().length === 0 && !showWbsOnly;
+}
+
+// ═══════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════
+
+document.addEventListener('DOMContentLoaded', function () {
     initGantt();
     initializeDefaultGroupConfig();
     applyColorsToDom();
@@ -98,18 +156,21 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initializeDefaultGroupConfig() {
-    if (groupConfig.groupLevels.length === 0) {
+    if (!groupConfig.groupLevels.length) {
         for (let i = 0; i < 12; i++) {
-            groupConfig.groupLevels.push({
-                field: '', indent: true, toLevel: 'all', interval: 'none', pageBreak: false,
-                ...DEFAULT_LEVEL_COLORS[i]
-            });
+            groupConfig.groupLevels.push(Object.assign({
+                field: '',
+                indent: true,
+                toLevel: 'all',
+                interval: 'none',
+                pageBreak: false
+            }, DEFAULT_LEVEL_COLORS[i]));
         }
     }
 }
 
 function initGantt() {
-    gantt.config.date_format = "%Y-%m-%d";
+    gantt.config.date_format = '%Y-%m-%d';
     gantt.config.row_height = 26;
     gantt.config.min_column_width = 40;
     gantt.config.scale_height = 60;
@@ -120,115 +181,220 @@ function initGantt() {
     gantt.config.open_tree_initially = false;
     gantt.config.grid_width = 700;
     gantt.config.scrollable = true;
-    
-    gantt.templates.task_text = function(start, end, task) {
-        if (task.is_grand_total) return `<strong>GRAND TOTAL</strong>`;
-        if (task.is_wbs_summary) return `<strong>${task.text}</strong> (${task.child_count || 0})`;
-        if (task.is_group) return `<strong>${task.text}</strong> (${task.group_count || 0})`;
-        return task.activity_id || '';
+
+    gantt.templates.task_text = function (start, end, task) {
+        if (task.is_grand_total) return '<strong>GRAND TOTAL</strong>';
+        if (task.is_wbs_summary) {
+            return '<strong>' + esc(task.text) + '</strong> (' + esc(task.child_count || 0) + ')';
+        }
+        if (task.is_group) {
+            return '<strong>' + esc(task.text) + '</strong> (' + esc(task.group_count || 0) + ')';
+        }
+        return esc(task.activity_id || '');
     };
-    
-    gantt.templates.grid_row_class = function(start, end, task) {
+
+    gantt.templates.grid_row_class = function (start, end, task) {
         if (task.is_grand_total) return 'gantt-grand-total';
         if (task.is_wbs_summary) return 'gantt-wbs-summary';
-        if (task.is_group) return `gantt-group-l${task.group_level || 1}`;
+        if (task.is_group) return 'gantt-group-l' + (task.group_level || 1);
         if (task.is_critical) return 'critical-row';
         return '';
     };
-    
-    gantt.templates.task_class = function(start, end, task) {
+
+    gantt.templates.task_class = function (start, end, task) {
         if (task.is_grand_total) return 'gantt-grand-total';
-        if (task.is_wbs_summary) return `gantt-wbs-l${Math.min(task.wbs_depth || 1, 12)}`;
-        if (task.is_group) return `gantt-summary-l${task.group_level || 1}`;
+        if (task.is_wbs_summary) return 'gantt-wbs-l' + Math.min(task.wbs_depth || 1, 12);
+        if (task.is_group) return 'gantt-summary-l' + (task.group_level || 1);
         return task.custom_class || '';
     };
-    
+
     gantt.plugins({ tooltip: true });
-    gantt.templates.tooltip_text = function(start, end, task) {
-        if (task.is_wbs_summary) return `<div style="padding:6px;"><b>WBS: ${task.text}</b><br>Activities: ${task.child_count}<br>Duration: ${task.original_duration}d</div>`;
-        if (task.is_group) return `<div style="padding:6px;"><b>${task.text}</b><br>Activities: ${task.group_count}</div>`;
-        return `<div style="padding:6px;"><b>${task.activity_id}</b> - ${task.text}<br><b>Start:</b> ${task.start_date}<br><b>Finish:</b> ${task.end_date}<br><b>Duration:</b> ${task.original_duration}d<br><b>Float:</b> ${task.total_float}d${task.is_critical ? ' 🔴' : ''}</div>`;
+    gantt.templates.tooltip_text = function (start, end, task) {
+        if (task.is_wbs_summary) {
+            return '<div style="padding:6px;"><b>WBS: ' + esc(task.text) + '</b><br>Activities: ' +
+                esc(task.child_count) + '<br>Duration: ' + esc(task.original_duration) + 'd</div>';
+        }
+        if (task.is_group) {
+            return '<div style="padding:6px;"><b>' + esc(task.text) + '</b><br>Activities: ' +
+                esc(task.group_count) + '</div>';
+        }
+        return '<div style="padding:6px;"><b>' + esc(task.activity_id) + '</b> - ' + esc(task.text) +
+            '<br><b>Start:</b> ' + esc(task.start_date) +
+            '<br><b>Finish:</b> ' + esc(task.end_date) +
+            '<br><b>Duration:</b> ' + esc(task.original_duration) + 'd' +
+            '<br><b>Float:</b> ' + esc(task.total_float) + 'd' +
+            (task.is_critical ? ' 🔴' : '') + '</div>';
     };
-    
+
     applyColumnConfig();
-    gantt.init("ganttChart");
+    gantt.init('ganttChart');
     setZoom('week');
 }
 
 function applyColumnConfig() {
-    const columns = selectedColumns.map(colKey => {
+    const columns = selectedColumns.map(function (colKey) {
         const col = AVAILABLE_COLUMNS[colKey];
+        if (!col) return null;
         return {
-            name: colKey, label: col.label, width: col.width, align: col.align || 'left',
-            resize: true, tree: col.tree || false,
-            template: function(task) {
+            name: colKey,
+            label: col.label,
+            width: col.width,
+            align: col.align || 'left',
+            resize: true,
+            tree: !!col.tree,
+            template: function (task) {
                 if (task.is_grand_total) {
                     if (col.tree) return '<strong>GRAND TOTAL</strong>';
-                    if (colKey === 'original_duration') return task.original_duration ? task.original_duration.toFixed(0) + 'd' : '';
+                    if (colKey === 'original_duration' && task.original_duration != null) {
+                        return Number(task.original_duration).toFixed(0) + 'd';
+                    }
                     return '';
                 }
                 if (task.is_wbs_summary) {
-                    if (col.tree) return `<strong>${task.text}</strong> <span style="opacity:0.8;">(${task.child_count})</span>`;
-                    if (colKey === 'activity_id') return `<strong>${task.wbs_code || ''}</strong>`;
-                    if (colKey === 'original_duration') return task.original_duration ? task.original_duration.toFixed(0) + 'd' : '';
-                    if (colKey === 'early_start' || colKey === 'baseline_start') return task.early_start || '';
-                    if (colKey === 'early_finish' || colKey === 'baseline_finish') return task.early_finish || '';
-                    if (colKey === 'total_float') return task.total_float !== undefined ? task.total_float.toFixed(0) + 'd' : '';
-                    if (colKey === 'physical_percent') return task.physical_percent !== undefined ? task.physical_percent.toFixed(1) + '%' : '';
+                    if (col.tree) {
+                        return '<strong>' + esc(task.text) + '</strong> <span style="opacity:0.8;">(' +
+                            esc(task.child_count) + ')</span>';
+                    }
+                    if (colKey === 'activity_id') return '<strong>' + esc(task.wbs_code || '') + '</strong>';
+                    if (colKey === 'original_duration' && task.original_duration != null) {
+                        return Number(task.original_duration).toFixed(0) + 'd';
+                    }
+                    if (colKey === 'early_start' || colKey === 'baseline_start') return esc(task.early_start || '');
+                    if (colKey === 'early_finish' || colKey === 'baseline_finish') return esc(task.early_finish || '');
+                    if (colKey === 'total_float' && task.total_float !== undefined) {
+                        return Number(task.total_float).toFixed(0) + 'd';
+                    }
+                    if (colKey === 'physical_percent' && task.physical_percent !== undefined) {
+                        return Number(task.physical_percent).toFixed(1) + '%';
+                    }
                     return '';
                 }
                 if (task.is_group) {
-                    if (col.tree) return `<strong>${task.text}</strong> <span style="opacity:0.8;">(${task.group_count})</span>`;
-                    if (['original_duration', 'remaining_duration', 'actual_duration'].includes(colKey)) return task[colKey] ? task[colKey].toFixed(0) + 'd' : '';
-                    if (['early_start', 'baseline_start', 'actual_start'].includes(colKey)) return task['group_start'] || '';
-                    if (['early_finish', 'baseline_finish', 'actual_finish'].includes(colKey)) return task['group_end'] || '';
-                    if (colKey === 'total_float') return task[colKey] !== undefined ? task[colKey].toFixed(0) + 'd' : '';
+                    if (col.tree) {
+                        return '<strong>' + esc(task.text) + '</strong> <span style="opacity:0.8;">(' +
+                            esc(task.group_count) + ')</span>';
+                    }
+                    if (['original_duration', 'remaining_duration', 'actual_duration'].indexOf(colKey) >= 0) {
+                        return task[colKey] != null ? Number(task[colKey]).toFixed(0) + 'd' : '';
+                    }
+                    if (['early_start', 'baseline_start', 'actual_start'].indexOf(colKey) >= 0) {
+                        return esc(task.group_start || '');
+                    }
+                    if (['early_finish', 'baseline_finish', 'actual_finish'].indexOf(colKey) >= 0) {
+                        return esc(task.group_end || '');
+                    }
+                    if (colKey === 'total_float' && task.total_float !== undefined) {
+                        return Number(task.total_float).toFixed(0) + 'd';
+                    }
                     return '';
                 }
+
                 let val = task[colKey];
                 if (val === undefined || val === null) return '';
                 if (typeof val === 'number') {
-                    if (colKey.includes('cost') || colKey === 'earned_value') return '$' + val.toLocaleString(undefined, {maximumFractionDigits: 0});
-                    if (colKey.includes('percent')) return val.toFixed(1) + '%';
+                    if (colKey.indexOf('cost') >= 0 || colKey === 'earned_value') {
+                        return '$' + val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+                    }
+                    if (colKey.indexOf('percent') >= 0) return val.toFixed(1) + '%';
                     if (colKey === 'spi' || colKey === 'cpi') return val.toFixed(3);
+                    if (colKey === 'total_float' || colKey === 'free_float' ||
+                        colKey.indexOf('duration') >= 0) {
+                        return val.toFixed(1) + 'd';
+                    }
                     return val.toFixed(1);
                 }
-                if (colKey === 'total_float' && task.is_critical) return `🔴 ${val}`;
-                return val || '';
+                if (colKey === 'total_float' && task.is_critical) {
+                    return '🔴 ' + esc(val);
+                }
+                return esc(val);
             }
         };
-    });
+    }).filter(Boolean);
+
     gantt.config.columns = columns;
 }
 
+// ═══════════════════════════════════════════
+// DATA LOAD
+// ═══════════════════════════════════════════
+
 function loadData(maxActivities) {
-    document.getElementById('loadingOverlay').style.display = 'flex';
-    fetch(`/api/gantt-data?max=${maxActivities}`)
-        .then(res => res.json())
-        .then(response => {
-            if (response.error) {
-                document.getElementById('loadingOverlay').innerHTML = `<div style="text-align:center;"><p style="color:red;">❌ ${response.error}</p><a href="/" class="btn btn-primary">Go to Dashboard</a></div>`;
-                return;
-            }
-            allTasks = response.data.tasks || [];
-            allLinks = response.data.links || [];
-            groupableValues = response.data.groupable_values || {};
-            document.getElementById('statsDisplay').innerHTML = `📌 ${response.data.total || 0} activities | 🌳 ${response.data.wbs_summary_count || 0} WBS | 🔴 ${response.data.critical_count || 0} critical | rows: ${allTasks.length}`;
-            console.log('Loaded tasks:', allTasks.length, 'Sample:', allTasks.slice(0, 3));
-            renderGantt();
-            document.getElementById('loadingOverlay').style.display = 'none';
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.innerHTML =
+            '<div style="text-align:center;"><div class="spinner"></div>' +
+            '<p style="margin-top:1rem;">Loading Gantt data...</p></div>';
+    }
+
+    const max = maxActivities || 2000;
+    fetch('/api/gantt-data?max=' + encodeURIComponent(max))
+        .then(function (res) {
+            return res.json().then(function (body) {
+                return { res: res, body: body };
+            }).catch(function () {
+                return { res: res, body: {} };
+            });
         })
-        .catch(err => {
+        .then(function (pack) {
+            const res = pack.res;
+            const response = pack.body || {};
+            if (!res.ok || response.error) {
+                throw new Error(response.error || ('Failed to load Gantt (' + res.status + ')'));
+            }
+
+            const data = response.data || {};
+            allTasks = data.tasks || [];
+            allLinks = data.links || [];
+            groupableValues = data.groupable_values || {};
+            ganttDataDate = data.data_date || null;
+
+            mergeActivityCodeGroupFields();
+
+            const stats = document.getElementById('statsDisplay');
+            if (stats) {
+                stats.textContent =
+                    '📌 ' + (data.total || 0) + ' activities | 🌳 ' +
+                    (data.wbs_summary_count || 0) + ' WBS | 🔴 ' +
+                    (data.critical_count || 0) + ' critical | rows: ' + allTasks.length;
+            }
+
+            renderGantt();
+            if (overlay) overlay.style.display = 'none';
+        })
+        .catch(function (err) {
             console.error(err);
-            document.getElementById('loadingOverlay').innerHTML = '<p style="color:red;">Failed to load data</p>';
+            if (overlay) {
+                overlay.innerHTML =
+                    '<div style="text-align:center;padding:1rem;">' +
+                    '<p style="color:#dc2626;">❌ ' + esc(err.message || 'Failed to load') + '</p>' +
+                    '<a href="/" class="btn btn-primary" style="margin-top:1rem;display:inline-flex;">Go to Dashboard</a>' +
+                    '</div>';
+            }
         });
 }
 
-function reloadData(maxActivities) { loadData(maxActivities); }
+function reloadData(maxActivities) {
+    loadData(maxActivities);
+}
+
+function mergeActivityCodeGroupFields() {
+    const codes = (groupableValues && groupableValues.activity_codes) || {};
+    Object.keys(codes).forEach(function (typeName) {
+        const key = 'activity_codes.' + typeName;
+        if (!GROUPING_FIELDS[key]) {
+            GROUPING_FIELDS[key] = 'Code: ' + typeName;
+        }
+    });
+}
+
+// ═══════════════════════════════════════════
+// FILTER / GROUP HELPERS
+// ═══════════════════════════════════════════
 
 function getGroupValue(task, field) {
     if (!field) return '';
-    if (field.startsWith('activity_codes.')) {
+    if (field.indexOf('activity_codes.') === 0) {
         const codeType = field.substring('activity_codes.'.length);
         return (task.activity_codes && task.activity_codes[codeType]) || '(No Code)';
     }
@@ -236,141 +402,219 @@ function getGroupValue(task, field) {
 }
 
 function taskMatchesFilters(task) {
-    if (filterConditions.length === 0) return true;
-    const results = filterConditions.map(cond => {
+    if (!filterConditions.length) return true;
+    const results = filterConditions.map(function (cond) {
         const val = task[cond.field];
         const op = cond.operator;
         const cmp = cond.value;
         if (op === 'equals') return String(val).toLowerCase() === String(cmp).toLowerCase();
-        if (op === 'contains') return String(val).toLowerCase().includes(String(cmp).toLowerCase());
+        if (op === 'contains') return String(val).toLowerCase().indexOf(String(cmp).toLowerCase()) >= 0;
         if (op === 'greater_than') return parseFloat(val) > parseFloat(cmp);
         if (op === 'less_than') return parseFloat(val) < parseFloat(cmp);
         return true;
     });
-    return filterLogic === 'AND' ? results.every(r => r) : results.some(r => r);
+    return filterLogic === 'AND' ? results.every(Boolean) : results.some(Boolean);
 }
 
+function sortLeafTasks(tasks) {
+    const sort = groupConfig.sort || { field: 'activity_id', order: 'asc' };
+    const field = sort.field || 'activity_id';
+    const dir = sort.order === 'desc' ? -1 : 1;
+    return tasks.slice().sort(function (a, b) {
+        let va = a[field];
+        let vb = b[field];
+        if (typeof va === 'string') va = va.toLowerCase();
+        if (typeof vb === 'string') vb = vb.toLowerCase();
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
+    });
+}
+
+// ═══════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════
+
 function renderGantt() {
-    let tasksToShow = Array.isArray(allTasks) ? [...allTasks] : [];
-    
+    let tasksToShow = Array.isArray(allTasks) ? allTasks.slice() : [];
+
     if (!tasksToShow.length) {
-        console.warn('No tasks received');
         gantt.clearAll();
         return;
     }
-    
-    if (showWbsOnly) tasksToShow = tasksToShow.filter(t => t.is_wbs_summary);
-    if (showCriticalOnly) tasksToShow = tasksToShow.filter(t => t.is_wbs_summary || t.is_critical);
-    tasksToShow = tasksToShow.filter(t => t.is_wbs_summary || taskMatchesFilters(t));
-    
-    const sort = groupConfig.sort || { field: 'activity_id', order: 'asc' };
-    tasksToShow.sort((a, b) => {
-        if (a.is_wbs_summary || b.is_wbs_summary) return 0;
-        let va = a[sort.field]; let vb = b[sort.field];
-        if (typeof va === 'string') va = va.toLowerCase();
-        if (typeof vb === 'string') vb = vb.toLowerCase();
-        if (va < vb) return sort.order === 'asc' ? -1 : 1;
-        if (va > vb) return sort.order === 'asc' ? 1 : -1;
-        return 0;
-    });
-    
-    displayTasks = [];
-    const activeGrouping = (groupConfig.groupLevels || []).filter(g => g.field);
-    
-    if (activeGrouping.length === 0) {
-        tasksToShow.forEach(t => displayTasks.push({ ...t }));
-    } else {
-        const flatActivities = tasksToShow.filter(t => !t.is_wbs_summary);
-        buildGroupedTasks(flatActivities, activeGrouping, 0, 0);
+
+    if (showWbsOnly) {
+        tasksToShow = tasksToShow.filter(function (t) { return t.is_wbs_summary; });
     }
-    
-    // Sanitize parents
-    const validIds = new Set(displayTasks.map(t => String(t.id)));
-    displayTasks.forEach(t => {
+    if (showCriticalOnly) {
+        tasksToShow = tasksToShow.filter(function (t) {
+            return t.is_wbs_summary || t.is_critical;
+        });
+    }
+    tasksToShow = tasksToShow.filter(function (t) {
+        return t.is_wbs_summary || taskMatchesFilters(t);
+    });
+
+    const grouping = activeGroupingLevels();
+    displayTasks = [];
+
+    if (grouping.length === 0) {
+        // Native hierarchy from server — do NOT shuffle WBS order
+        let leaves = tasksToShow.filter(function (t) { return !t.is_wbs_summary; });
+        const wbsNodes = tasksToShow.filter(function (t) { return t.is_wbs_summary; });
+
+        // Optional leaf sort only when not relying on pure WBS display stability
+        if (!showWbsOnly) {
+            leaves = sortLeafTasks(leaves);
+        }
+
+        wbsNodes.forEach(function (t) { displayTasks.push(Object.assign({}, t)); });
+        leaves.forEach(function (t) { displayTasks.push(Object.assign({}, t)); });
+    } else {
+        // Group mode: drop server WBS summaries, build synthetic bands
+        let flat = tasksToShow.filter(function (t) { return !t.is_wbs_summary; });
+        flat = sortLeafTasks(flat);
+        buildGroupedTasks(flat, grouping, 0, 0);
+    }
+
+    // Sanitize parents + dates
+    const validIds = new Set(displayTasks.map(function (t) { return String(t.id); }));
+    displayTasks.forEach(function (t) {
         const p = t.parent;
         if (p === null || p === undefined || p === '' || p === 0 || p === '0') {
             t.parent = 0;
         } else if (!validIds.has(String(p))) {
             t.parent = 0;
         }
-        if (!t.start_date) t.start_date = '2000-01-01';
-        if (!t.end_date) t.end_date = t.start_date;
+        ensureDates(t);
     });
-    
-    if (groupConfig.displayOptions?.showGrandTotals && displayTasks.length > 0) {
-        const actualTasks = displayTasks.filter(t => !t.is_group && !t.is_wbs_summary);
-        const totalDur = actualTasks.reduce((s, t) => s + (t.original_duration || 0), 0);
-        const startDates = actualTasks.map(t => t.start_date).filter(Boolean).sort();
-        const endDates = actualTasks.map(t => t.end_date).filter(Boolean).sort();
+
+    if (groupConfig.displayOptions && groupConfig.displayOptions.showGrandTotals && displayTasks.length) {
+        const actual = displayTasks.filter(function (t) {
+            return !t.is_group && !t.is_wbs_summary;
+        });
+        const totalDur = actual.reduce(function (s, t) {
+            return s + (Number(t.original_duration) || 0);
+        }, 0);
+        const starts = actual.map(function (t) { return t.start_date; }).filter(Boolean).sort();
+        const ends = actual.map(function (t) { return t.end_date; }).filter(Boolean).sort();
         displayTasks.push({
-            id: '__grand_total__', text: 'GRAND TOTAL',
-            start_date: startDates[0] || '2000-01-01', end_date: endDates[endDates.length - 1] || '2000-01-01',
-            parent: 0, is_group: true, is_grand_total: true, group_level: 0,
-            group_count: actualTasks.length, original_duration: totalDur,
-            type: 'project', open: true, progress: 0
+            id: '__grand_total__',
+            text: 'GRAND TOTAL',
+            start_date: starts[0] || fallbackDate(),
+            end_date: ends[ends.length - 1] || fallbackDate(),
+            parent: 0,
+            is_group: true,
+            is_grand_total: true,
+            group_level: 0,
+            group_count: actual.length,
+            original_duration: totalDur,
+            type: 'project',
+            open: true,
+            progress: 0
         });
     }
-    
-    try {
-        gantt.clearAll();
-        gantt.parse({ data: displayTasks, links: allLinks || [] });
-    } catch (err) {
-        console.error('Gantt parse failed, falling back to flat', err);
-        const flat = displayTasks.filter(t => !t.is_group).map(t => ({ ...t, parent: 0, type: t.is_milestone ? 'milestone' : 'task' }));
-        gantt.clearAll();
-        gantt.parse({ data: flat, links: [] });
-        displayTasks = flat;
-    }
-    
-    gantt.eachTask(function(task) {
-        if (task.is_wbs_summary || (task.is_group && (task.group_level || 0) <= 2)) {
-            try { gantt.open(task.id); } catch(e) {}
-        }
+
+    parseSafe(displayTasks);
+
+    // Open only shallow WBS / groups
+    gantt.eachTask(function (task) {
+        try {
+            if (task.is_wbs_summary && (task.wbs_depth || 1) <= 2) {
+                gantt.open(task.id);
+            } else if (task.is_group && (task.group_level || 0) <= 2) {
+                gantt.open(task.id);
+            }
+        } catch (e) { /* ignore */ }
     });
-    
+
     let shown = 0;
-    gantt.eachTask(function() { shown++; });
+    gantt.eachTask(function () { shown++; });
     if (shown === 0) {
         console.warn('Gantt empty after parse. Forcing flat.');
-        const flat = allTasks.filter(t => !t.is_wbs_summary).map(t => ({
-            ...t, parent: 0, type: t.is_milestone ? 'milestone' : 'task',
-            start_date: t.start_date || '2000-01-01',
-            end_date: t.end_date || t.start_date || '2000-01-01'
-        }));
-        gantt.clearAll();
-        gantt.parse({ data: flat, links: [] });
+        const flat = allTasks
+            .filter(function (t) { return !t.is_wbs_summary; })
+            .map(function (t) {
+                const x = Object.assign({}, t, {
+                    parent: 0,
+                    type: t.is_milestone ? 'milestone' : 'task'
+                });
+                return ensureDates(x);
+            });
+        parseSafe(flat);
         displayTasks = flat;
     }
-    
+
     updateGroupInfoBar();
+}
+
+function parseSafe(tasks) {
+    gantt.clearAll();
+    try {
+        gantt.parse({ data: tasks, links: visibleLinks(tasks) });
+    } catch (err) {
+        console.error('Gantt parse failed, falling back to flat', err);
+        const flat = (tasks || [])
+            .filter(function (t) { return !t.is_group; })
+            .map(function (t) {
+                const x = Object.assign({}, t, {
+                    parent: 0,
+                    type: t.is_milestone ? 'milestone' : (t.type || 'task')
+                });
+                return ensureDates(x);
+            });
+        gantt.clearAll();
+        gantt.parse({ data: flat, links: visibleLinks(flat) });
+        displayTasks = flat;
+    }
 }
 
 function buildGroupedTasks(tasks, groupingConfigs, level, parentId) {
     if (level >= groupingConfigs.length) {
-        tasks.forEach(t => displayTasks.push({ ...t, parent: parentId }));
+        tasks.forEach(function (t) {
+            displayTasks.push(Object.assign({}, t, { parent: parentId }));
+        });
         return;
     }
+
     const field = groupingConfigs[level].field;
     const groups = {};
-    tasks.forEach(t => {
+    tasks.forEach(function (t) {
         const gv = getGroupValue(t, field);
         if (!groups[gv]) groups[gv] = [];
         groups[gv].push(t);
     });
-    const keys = groupConfig.displayOptions?.sortBandsAlpha ? Object.keys(groups).sort() : Object.keys(groups);
-    keys.forEach(gv => {
+
+    let keys = Object.keys(groups);
+    if (groupConfig.displayOptions && groupConfig.displayOptions.sortBandsAlpha) {
+        keys = keys.sort();
+    }
+
+    keys.forEach(function (gv) {
         const gt = groups[gv];
-        const gid = `group_${level}_${gv}_${parentId}`.replace(/[^a-zA-Z0-9_]/g, '_');
-        const starts = gt.map(t => t.start_date).filter(Boolean).sort();
-        const ends = gt.map(t => t.end_date).filter(Boolean).sort();
+        const gid = ('group_' + level + '_' + gv + '_' + parentId).replace(/[^a-zA-Z0-9_]/g, '_');
+        const starts = gt.map(function (t) { return t.start_date; }).filter(Boolean).sort();
+        const ends = gt.map(function (t) { return t.end_date; }).filter(Boolean).sort();
+        const floats = gt.map(function (t) { return Number(t.total_float) || 0; });
+
         displayTasks.push({
-            id: gid, text: gv,
-            start_date: starts[0] || '2000-01-01', end_date: ends[ends.length - 1] || '2000-01-01',
-            group_start: starts[0] || '', group_end: ends[ends.length - 1] || '',
-            parent: parentId, is_group: true, group_level: level + 1, group_count: gt.length,
-            original_duration: gt.reduce((s, t) => s + (t.original_duration || 0), 0),
-            total_float: gt.length ? Math.min(...gt.map(t => t.total_float || 0)) : 0,
-            type: 'project', open: level < 2, progress: 0,
+            id: gid,
+            text: gv,
+            start_date: starts[0] || fallbackDate(),
+            end_date: ends[ends.length - 1] || fallbackDate(),
+            group_start: starts[0] || '',
+            group_end: ends[ends.length - 1] || '',
+            parent: parentId,
+            is_group: true,
+            group_level: level + 1,
+            group_count: gt.length,
+            original_duration: gt.reduce(function (s, t) {
+                return s + (Number(t.original_duration) || 0);
+            }, 0),
+            total_float: floats.length ? Math.min.apply(null, floats) : 0,
+            type: 'project',
+            open: level < 2,
+            progress: 0
         });
         buildGroupedTasks(gt, groupingConfigs, level + 1, gid);
     });
@@ -379,130 +623,304 @@ function buildGroupedTasks(tasks, groupingConfigs, level, parentId) {
 function updateGroupInfoBar() {
     const bar = document.getElementById('groupInfoBar');
     if (!bar) return;
-    const activeGrouping = (groupConfig.groupLevels || []).filter(g => g.field);
-    if (activeGrouping.length === 0 && filterConditions.length === 0) {
+    const active = activeGroupingLevels();
+    if (!active.length && !filterConditions.length) {
         bar.style.display = 'none';
         return;
     }
     bar.style.display = 'flex';
-    if (activeGrouping.length > 0) {
-        document.getElementById('groupBadges').innerHTML = activeGrouping.map((g, idx) => `<span class="group-badge">L${idx+1}: ${GROUPING_FIELDS[g.field] || g.field}</span>`).join(' ');
-    } else {
-        document.getElementById('groupBadges').innerHTML = '<span style="color:#94a3b8;">WBS hierarchy</span>';
+    const badges = document.getElementById('groupBadges');
+    if (badges) {
+        if (active.length) {
+            badges.innerHTML = active.map(function (g, idx) {
+                return '<span class="group-badge">L' + (idx + 1) + ': ' +
+                    esc(GROUPING_FIELDS[g.field] || g.field) + '</span>';
+            }).join(' ');
+        } else {
+            badges.innerHTML = '<span style="color:#94a3b8;">WBS hierarchy (native)</span>';
+        }
     }
-    document.getElementById('sortInfo').textContent = `${groupConfig.sort.field} (${groupConfig.sort.order === 'asc' ? '↑' : '↓'})`;
+    const sortInfo = document.getElementById('sortInfo');
+    if (sortInfo) {
+        sortInfo.textContent =
+            (groupConfig.sort.field || 'activity_id') +
+            ' (' + (groupConfig.sort.order === 'asc' ? '↑' : '↓') + ')';
+    }
 }
 
 function applyColorsToDom() {
-    groupConfig.groupLevels.forEach((level, idx) => {
-        if (idx < 12) document.documentElement.style.setProperty(`--group-color-${idx + 1}`, level.bgColor);
+    (groupConfig.groupLevels || []).forEach(function (level, idx) {
+        if (idx < 12 && level.bgColor) {
+            document.documentElement.style.setProperty('--group-color-' + (idx + 1), level.bgColor);
+        }
     });
 }
+
+// ═══════════════════════════════════════════
+// ZOOM / TOOLBAR
+// ═══════════════════════════════════════════
 
 function setZoom(scale) {
     currentZoom = scale;
     const sel = document.getElementById('timescaleSelect');
     if (sel) sel.value = scale;
-    switch(scale) {
-        case 'day': gantt.config.scales = [{ unit: 'month', step: 1, format: '%F %Y' }, { unit: 'day', step: 1, format: '%d' }]; gantt.config.min_column_width = 30; break;
-        case 'week': gantt.config.scales = [{ unit: 'month', step: 1, format: '%F %Y' }, { unit: 'week', step: 1, format: 'Wk %W' }]; gantt.config.min_column_width = 55; break;
-        case 'month': gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }, { unit: 'month', step: 1, format: '%M' }]; gantt.config.min_column_width = 65; break;
-        case 'quarter': gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }, { unit: 'quarter', step: 1, format: function(d) { return 'Q' + (Math.floor(d.getMonth() / 3) + 1); }}]; gantt.config.min_column_width = 75; break;
-        case 'year': gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }]; gantt.config.min_column_width = 90; break;
-        case 'year_quarter': gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }, { unit: 'quarter', step: 1, format: function(d) { return 'Q' + (Math.floor(d.getMonth() / 3) + 1); }}]; gantt.config.min_column_width = 80; break;
-        case 'year_month': gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }, { unit: 'month', step: 1, format: '%M' }]; gantt.config.min_column_width = 55; break;
-        case 'year_quarter_month': gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }, { unit: 'quarter', step: 1, format: function(d) { return 'Q' + (Math.floor(d.getMonth() / 3) + 1); }}, { unit: 'month', step: 1, format: '%M' }]; gantt.config.min_column_width = 55; gantt.config.scale_height = 80; break;
-        case 'quarter_month': gantt.config.scales = [{ unit: 'quarter', step: 1, format: function(d) { return 'Q' + (Math.floor(d.getMonth() / 3) + 1) + ' ' + d.getFullYear(); }}, { unit: 'month', step: 1, format: '%M' }]; gantt.config.min_column_width = 55; break;
+
+    switch (scale) {
+        case 'day':
+            gantt.config.scales = [
+                { unit: 'month', step: 1, format: '%F %Y' },
+                { unit: 'day', step: 1, format: '%d' }
+            ];
+            gantt.config.min_column_width = 30;
+            break;
+        case 'week':
+            gantt.config.scales = [
+                { unit: 'month', step: 1, format: '%F %Y' },
+                { unit: 'week', step: 1, format: 'Wk %W' }
+            ];
+            gantt.config.min_column_width = 55;
+            break;
+        case 'month':
+            gantt.config.scales = [
+                { unit: 'year', step: 1, format: '%Y' },
+                { unit: 'month', step: 1, format: '%M' }
+            ];
+            gantt.config.min_column_width = 65;
+            break;
+        case 'quarter':
+            gantt.config.scales = [
+                { unit: 'year', step: 1, format: '%Y' },
+                {
+                    unit: 'quarter', step: 1, format: function (d) {
+                        return 'Q' + (Math.floor(d.getMonth() / 3) + 1);
+                    }
+                }
+            ];
+            gantt.config.min_column_width = 75;
+            break;
+        case 'year':
+            gantt.config.scales = [{ unit: 'year', step: 1, format: '%Y' }];
+            gantt.config.min_column_width = 90;
+            break;
+        case 'year_quarter':
+            gantt.config.scales = [
+                { unit: 'year', step: 1, format: '%Y' },
+                {
+                    unit: 'quarter', step: 1, format: function (d) {
+                        return 'Q' + (Math.floor(d.getMonth() / 3) + 1);
+                    }
+                }
+            ];
+            gantt.config.min_column_width = 80;
+            break;
+        case 'year_month':
+            gantt.config.scales = [
+                { unit: 'year', step: 1, format: '%Y' },
+                { unit: 'month', step: 1, format: '%M' }
+            ];
+            gantt.config.min_column_width = 55;
+            break;
+        case 'year_quarter_month':
+            gantt.config.scales = [
+                { unit: 'year', step: 1, format: '%Y' },
+                {
+                    unit: 'quarter', step: 1, format: function (d) {
+                        return 'Q' + (Math.floor(d.getMonth() / 3) + 1);
+                    }
+                },
+                { unit: 'month', step: 1, format: '%M' }
+            ];
+            gantt.config.min_column_width = 55;
+            gantt.config.scale_height = 80;
+            break;
+        case 'quarter_month':
+            gantt.config.scales = [
+                {
+                    unit: 'quarter', step: 1, format: function (d) {
+                        return 'Q' + (Math.floor(d.getMonth() / 3) + 1) + ' ' + d.getFullYear();
+                    }
+                },
+                { unit: 'month', step: 1, format: '%M' }
+            ];
+            gantt.config.min_column_width = 55;
+            break;
+        default:
+            break;
     }
     if (scale !== 'year_quarter_month') gantt.config.scale_height = 60;
     gantt.render();
 }
 
-function scrollToToday() { gantt.showDate(new Date()); }
-function fitAll() { const t = gantt.getTaskByTime(); if (t.length) gantt.showDate(t[0].start_date); }
-function expandAll() { gantt.eachTask(t => gantt.open(t.id)); }
-function collapseAll() { gantt.eachTask(t => gantt.close(t.id)); }
+function scrollToToday() {
+    gantt.showDate(new Date());
+}
+
+function fitAll() {
+    const t = gantt.getTaskByTime();
+    if (t && t.length) gantt.showDate(t[0].start_date);
+}
+
+function expandAll() {
+    gantt.eachTask(function (t) { gantt.open(t.id); });
+}
+
+function collapseAll() {
+    gantt.eachTask(function (t) { gantt.close(t.id); });
+}
 
 function toggleCritical() {
     showCriticalOnly = !showCriticalOnly;
-    const btn = document.getElementById('criticalBtn');
-    if (btn) btn.parentElement.classList.toggle('active', showCriticalOnly);
+    const el = document.getElementById('criticalBtn');
+    const btn = el ? el.closest('.tb-btn') : null;
+    if (btn) btn.classList.toggle('active', showCriticalOnly);
+    if (el) el.textContent = showCriticalOnly ? '🔴 Critical Only ✓' : '🔴 Critical Only';
     renderGantt();
 }
 
 function toggleWbsSummary() {
     showWbsOnly = !showWbsOnly;
-    const btn = document.getElementById('wbsSummaryBtn');
-    if (btn) btn.parentElement.classList.toggle('active', showWbsOnly);
+    const el = document.getElementById('wbsSummaryBtn');
+    const btn = el ? el.closest('.tb-btn') : null;
+    if (btn) btn.classList.toggle('active', showWbsOnly);
+    if (el) el.textContent = showWbsOnly ? '🌳 WBS Only ✓' : '🌳 WBS Only';
     renderGantt();
 }
 
-function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function closeModal(id) {
+    const m = document.getElementById(id);
+    if (m) m.classList.remove('show');
+}
+
+// ═══════════════════════════════════════════
+// COLUMNS MODAL
+// ═══════════════════════════════════════════
 
 function showColumnSelector() {
     const container = document.getElementById('columnList');
+    if (!container) return;
     container.innerHTML = '';
+
     const categories = {};
-    Object.entries(AVAILABLE_COLUMNS).forEach(([key, col]) => {
+    Object.keys(AVAILABLE_COLUMNS).forEach(function (key) {
+        const col = AVAILABLE_COLUMNS[key];
         if (!categories[col.category]) categories[col.category] = [];
-        categories[col.category].push({ key, ...col });
+        categories[col.category].push(Object.assign({ key: key }, col));
     });
-    Object.entries(categories).forEach(([cat, cols]) => {
+
+    Object.keys(categories).forEach(function (cat) {
         const h = document.createElement('div');
-        h.style.cssText = 'grid-column: span 2; font-weight: 600; padding: 0.5rem 0 0.25rem; color: #3b82f6; border-bottom: 1px solid #e2e8f0;';
+        h.style.cssText = 'grid-column:span 2;font-weight:600;padding:0.5rem 0 0.25rem;color:#3b82f6;border-bottom:1px solid #e2e8f0;';
         h.textContent = cat;
         container.appendChild(h);
-        cols.forEach(col => {
+
+        categories[cat].forEach(function (col) {
             const item = document.createElement('label');
-            item.style.cssText = 'display:flex; align-items:center; gap:0.5rem; padding:0.4rem; cursor:pointer;';
-            item.innerHTML = `<input type="checkbox" value="${col.key}" ${selectedColumns.includes(col.key) ? 'checked' : ''}><span>${col.label}</span>`;
+            item.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.4rem;cursor:pointer;';
+            const checked = selectedColumns.indexOf(col.key) >= 0 ? ' checked' : '';
+            item.innerHTML =
+                '<input type="checkbox" value="' + esc(col.key) + '"' + checked + '>' +
+                '<span>' + esc(col.label) + '</span>';
             container.appendChild(item);
         });
     });
-    document.getElementById('columnModal').classList.add('show');
+
+    const modal = document.getElementById('columnModal');
+    if (modal) modal.classList.add('show');
 }
 
-function selectAllColumns(select) { document.querySelectorAll('#columnList input[type="checkbox"]').forEach(cb => cb.checked = select); }
-function resetColumns() { document.querySelectorAll('#columnList input[type="checkbox"]').forEach(cb => cb.checked = DEFAULT_COLUMNS.includes(cb.value)); }
+function selectAllColumns(select) {
+    document.querySelectorAll('#columnList input[type="checkbox"]').forEach(function (cb) {
+        cb.checked = !!select;
+    });
+}
+
+function resetColumns() {
+    document.querySelectorAll('#columnList input[type="checkbox"]').forEach(function (cb) {
+        cb.checked = DEFAULT_COLUMNS.indexOf(cb.value) >= 0;
+    });
+}
 
 function applyColumns() {
-    const checked = Array.from(document.querySelectorAll('#columnList input[type="checkbox"]:checked')).map(cb => cb.value);
-    if (checked.length === 0) { alert('Please select at least one column'); return; }
+    const checked = Array.prototype.map.call(
+        document.querySelectorAll('#columnList input[type="checkbox"]:checked'),
+        function (cb) { return cb.value; }
+    );
+    if (!checked.length) {
+        alert('Please select at least one column');
+        return;
+    }
     selectedColumns = checked;
-    if (!selectedColumns.includes('text')) selectedColumns.unshift('text');
+    if (selectedColumns.indexOf('text') < 0) selectedColumns.unshift('text');
     applyColumnConfig();
     renderGantt();
     closeModal('columnModal');
 }
 
-function showGroupModal() { document.getElementById('groupModal').classList.add('show'); renderGroupByTable(); }
+// ═══════════════════════════════════════════
+// GROUP MODAL
+// ═══════════════════════════════════════════
+
+function showGroupModal() {
+    const modal = document.getElementById('groupModal');
+    if (modal) modal.classList.add('show');
+    renderGroupByTable();
+}
 
 function renderGroupByTable() {
     const tbody = document.getElementById('groupByTableBody');
     if (!tbody) return;
     tbody.innerHTML = '';
+
     while (groupConfig.groupLevels.length < 12) {
-        groupConfig.groupLevels.push({ field: '', indent: true, toLevel: 'all', interval: 'none', pageBreak: false, ...DEFAULT_LEVEL_COLORS[groupConfig.groupLevels.length] });
+        const i = groupConfig.groupLevels.length;
+        groupConfig.groupLevels.push(Object.assign({
+            field: '', indent: true, toLevel: 'all', interval: 'none', pageBreak: false
+        }, DEFAULT_LEVEL_COLORS[i] || DEFAULT_LEVEL_COLORS[0]));
     }
+
     let opts = '<option value="">-- None --</option>';
-    Object.entries(GROUPING_FIELDS).forEach(([k, l]) => opts += `<option value="${k}">${l}</option>`);
-    groupConfig.groupLevels.forEach((level, idx) => {
+    Object.keys(GROUPING_FIELDS).forEach(function (k) {
+        opts += '<option value="' + esc(k) + '">' + esc(GROUPING_FIELDS[k]) + '</option>';
+    });
+
+    groupConfig.groupLevels.forEach(function (level, idx) {
         const tr = document.createElement('tr');
-        const sel = opts.replace(`value="${level.field}"`, `value="${level.field}" selected`);
-        tr.innerHTML = `
-            <td style="text-align:center;">${idx + 1}</td>
-            <td><select onchange="groupConfig.groupLevels[${idx}].field = this.value">${sel}</select></td>
-            <td style="text-align:center;"><input type="checkbox" ${level.indent ? 'checked' : ''}></td>
-            <td><select><option>All</option></select></td>
-            <td><select><option>-</option></select></td>
-            <td style="text-align:center;"><input type="checkbox"></td>
-            <td style="background:${level.bgColor}; color:${level.textColor}; text-align:center;">${level.fontSize} Arial</td>
-        `;
+        let sel = opts;
+        if (level.field) {
+            sel = opts.replace(
+                'value="' + level.field + '"',
+                'value="' + level.field + '" selected'
+            );
+        }
+        tr.innerHTML =
+            '<td style="text-align:center;">' + (idx + 1) + '</td>' +
+            '<td><select data-idx="' + idx + '" class="grp-field">' + sel + '</select></td>' +
+            '<td style="text-align:center;"><input type="checkbox" class="grp-indent" data-idx="' + idx + '"' +
+            (level.indent ? ' checked' : '') + '></td>' +
+            '<td><select disabled><option>All</option></select></td>' +
+            '<td><select disabled><option>-</option></select></td>' +
+            '<td style="text-align:center;"><input type="checkbox" disabled></td>' +
+            '<td style="background:' + esc(level.bgColor) + ';color:' + esc(level.textColor) +
+            ';text-align:center;">' + esc(level.fontSize) + ' Arial</td>';
         tbody.appendChild(tr);
+    });
+
+    tbody.querySelectorAll('select.grp-field').forEach(function (sel) {
+        sel.addEventListener('change', function () {
+            const i = parseInt(this.getAttribute('data-idx'), 10);
+            groupConfig.groupLevels[i].field = this.value;
+        });
+    });
+    tbody.querySelectorAll('input.grp-indent').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+            const i = parseInt(this.getAttribute('data-idx'), 10);
+            groupConfig.groupLevels[i].indent = this.checked;
+        });
     });
 }
 
 function applyGroupConfig(keepOpen) {
+    applyColorsToDom();
     renderGantt();
     if (!keepOpen) closeModal('groupModal');
 }
@@ -510,13 +928,40 @@ function applyGroupConfig(keepOpen) {
 function applyPreset(preset) {
     groupConfig.groupLevels = [];
     for (let i = 0; i < 12; i++) {
-        groupConfig.groupLevels.push({ field: '', indent: true, toLevel: 'all', interval: 'none', pageBreak: false, ...DEFAULT_LEVEL_COLORS[i] });
+        groupConfig.groupLevels.push(Object.assign({
+            field: '', indent: true, toLevel: 'all', interval: 'none', pageBreak: false
+        }, DEFAULT_LEVEL_COLORS[i]));
     }
-    switch(preset) {
-        case 'wbs': for (let i = 0; i < 12; i++) groupConfig.groupLevels[i].field = `wbs_level_${i+1}`; break;
-        case 'status': groupConfig.groupLevels[0].field = 'status'; break;
-        case 'critical': groupConfig.groupLevels[0].field = 'critical_text'; break;
-        case 'type': groupConfig.groupLevels[0].field = 'activity_type'; break;
+
+    switch (preset) {
+        case 'wbs':
+            // Native PROJWBS tree from API — clear synthetic grouping
+            groupConfig.groupLevels.forEach(function (l) { l.field = ''; });
+            showWbsOnly = false;
+            break;
+        case 'wbs_bands':
+            for (let i = 0; i < 12; i++) {
+                groupConfig.groupLevels[i].field = 'wbs_level_' + (i + 1);
+            }
+            break;
+        case 'status':
+            groupConfig.groupLevels[0].field = 'status';
+            break;
+        case 'critical':
+            groupConfig.groupLevels[0].field = 'critical_text';
+            break;
+        case 'type':
+            groupConfig.groupLevels[0].field = 'activity_type';
+            break;
+        default:
+            break;
     }
     renderGroupByTable();
 }
+
+// Optional: click outside modal to close
+document.addEventListener('click', function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains('modal-overlay')) {
+        e.target.classList.remove('show');
+    }
+});

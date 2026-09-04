@@ -1,20 +1,9 @@
 <!DOCTYPE html>
-<!--
-    MAIN DASHBOARD PAGE
-    ===================
-    This is what users see when they visit the website.
-    
-    Structure:
-    - Header (title + upload button)
-    - Summary cards (big numbers)
-    - Charts (visual data)
-    - Tables (detailed data)
--->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P6 Schedule Analyzer</title>
+    <title>{{ config.app_title }} - Main Dashboard</title>
     
     <!-- Chart.js: Library for beautiful charts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -24,40 +13,63 @@
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
     
-    <!-- Our custom styles -->
+    <!-- Dynamic Theme Overrides from config.py -->
+    <style>
+        :root {
+            --color-primary: {{ config.theme.primary }};
+            --color-primary-dark: {{ config.theme.primary_dark }};
+            --color-accent: {{ config.theme.accent }};
+            --color-success: {{ config.theme.success }};
+            --color-warning: {{ config.theme.warning }};
+            --color-danger: {{ config.theme.danger }};
+            --color-bg: {{ config.theme.bg }};
+            --color-surface: {{ config.theme.surface }};
+            --color-text: {{ config.theme.text }};
+            --color-muted: {{ config.theme.muted }};
+            --color-border: {{ config.theme.border }};
+        }
+    </style>
+
+    <!-- Custom App Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 
 <body>
-    
+    <noscript>
+        <div style="background: #dc2626; color: white; padding: 1rem; text-align: center; font-weight: bold;">
+            ⚠️ JavaScript is required to use P6 Schedule Analyzer. Please enable JavaScript in your browser settings.
+        </div>
+    </noscript>
+
     <!-- ═══════════ HEADER ═══════════ -->
-  <header class="app-header">
-    <div class="header-content">
-        <div class="logo-section">
-            {% if config.use_logo_image %}
-                <img src="{{ url_for('static', filename=config.logo_path) }}" 
-                     alt="Logo" style="height: 45px;">
-            {% else %}
-                <span class="logo-icon">📊</span>
-            {% endif %}
-            <div>
-                <h1>{{ config.app_title }}</h1>
-                <p class="subtitle">{{ config.app_subtitle }}</p>
+    <header class="app-header">
+        <div class="header-content">
+            <div class="logo-section">
+                {% if config.use_logo_image %}
+                    <img src="{{ url_for('static', filename=config.logo_path) }}" 
+                         alt="Logo" style="height: 45px;">
+                {% else %}
+                    <span class="logo-icon">📊</span>
+                {% endif %}
+                <div>
+                    <h1>{{ config.app_title }}</h1>
+                    <p class="subtitle">{{ config.app_subtitle }}</p>
+                </div>
+            </div>
+            
+            <div class="header-actions">
+                <button id="loadSampleBtn" class="btn btn-secondary">📄 Load Sample</button>
+                <button id="uploadBtn" class="btn btn-primary">📁 Upload XER</button>
+                <a href="/" class="btn btn-secondary" aria-current="page">📊 Dashboard</a>
+                <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
+                <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/evm" class="btn btn-secondary">📈 EVM</a>
+                <a href="/health" class="btn btn-secondary">🏥 Health</a>
+                <button id="exportBtn" class="btn btn-success" style="display:none;">⬇️ Export Excel</button>
+                <input type="file" id="fileInput" accept=".xer" style="display:none;">
             </div>
         </div>
-        
-        <div class="header-actions">
-    <button id="loadSampleBtn" class="btn btn-secondary">📄 Load Sample</button>
-    <button id="uploadBtn" class="btn btn-primary">📁 Upload XER</button>
-    <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
-    <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
-    <a href="/evm" class="btn btn-secondary">📊 EVM</a>
-    <a href="/health" class="btn btn-secondary">🏥 Health</a>
-    <button id="exportBtn" class="btn btn-success" style="display:none;">⬇️ Export Excel</button>
-    <input type="file" id="fileInput" accept=".xer" style="display:none;">
-</div>
-    </div>
-</header>
+    </header>
 
     <!-- ═══════════ MAIN CONTENT ═══════════ -->
     <main class="app-main">
@@ -66,7 +78,7 @@
         <div id="welcomeScreen" class="welcome-screen">
             <div class="welcome-content">
                 <div class="welcome-icon">🚀</div>
-                <h2>Welcome to P6 Schedule Analyzer</h2>
+                <h2>Welcome to {{ config.app_title }}</h2>
                 <p>Upload your Primavera P6 XER file to get started</p>
                 
                 <div class="upload-zone" id="dropZone">
@@ -95,7 +107,7 @@
                     </div>
                     <div class="feature">
                         <span>📤</span>
-                        <h3>Excel Export</h3>
+                        <h3>Excel & PDF Export</h3>
                         <p>Download detailed reports</p>
                     </div>
                 </div>
@@ -212,10 +224,10 @@
 
     <!-- ═══════════ FOOTER ═══════════ -->
     <footer class="app-footer">
-        <p>P6 Schedule Analyzer | Built with Python + Flask + Chart.js</p>
+        <p>&copy; {{ config.footer_year }} {{ config.company_name }} | {{ config.footer_text }}</p>
     </footer>
 
-    <!-- Our custom JavaScript -->
+    <!-- Custom JavaScript -->
     <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 </body>
 </html>

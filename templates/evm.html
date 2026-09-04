@@ -2,8 +2,30 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>EVM & S-Curves - P6 Analyzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVM &amp; S-Curves | {{ config.app_title }}</title>
+    
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Dynamic Theme Overrides from config.py -->
+    <style>
+        :root {
+            --color-primary: {{ config.theme.primary }};
+            --color-primary-dark: {{ config.theme.primary_dark }};
+            --color-accent: {{ config.theme.accent }};
+            --color-success: {{ config.theme.success }};
+            --color-warning: {{ config.theme.warning }};
+            --color-danger: {{ config.theme.danger }};
+            --color-bg: {{ config.theme.bg }};
+            --color-surface: {{ config.theme.surface }};
+            --color-text: {{ config.theme.text }};
+            --color-muted: {{ config.theme.muted }};
+            --color-border: {{ config.theme.border }};
+        }
+    </style>
+    
+    <!-- App Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     
     <style>
@@ -15,20 +37,23 @@
         }
         
         .metric-card {
-            background: white;
+            background: var(--color-surface, #ffffff);
             padding: 1.25rem;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            border-top: 4px solid;
+            border-radius: var(--radius-lg, 12px);
+            box-shadow: var(--shadow-md, 0 2px 4px rgba(0,0,0,0.05));
+            border-top: 4px solid var(--color-accent, #3b82f6);
+            border-left: 1px solid var(--color-border, #e2e8f0);
+            border-right: 1px solid var(--color-border, #e2e8f0);
+            border-bottom: 1px solid var(--color-border, #e2e8f0);
         }
         
-        .metric-card.good { border-top-color: #10b981; }
-        .metric-card.warning { border-top-color: #f59e0b; }
-        .metric-card.bad { border-top-color: #dc2626; }
-        .metric-card.neutral { border-top-color: #3b82f6; }
+        .metric-card.good { border-top-color: var(--color-success, #10b981); }
+        .metric-card.warning { border-top-color: var(--color-warning, #f59e0b); }
+        .metric-card.bad { border-top-color: var(--color-danger, #dc2626); }
+        .metric-card.neutral { border-top-color: var(--color-accent, #3b82f6); }
         
         .metric-label {
-            color: #64748b;
+            color: var(--color-muted, #64748b);
             font-size: 0.85rem;
             margin-bottom: 0.5rem;
         }
@@ -36,43 +61,61 @@
         .metric-value {
             font-size: 1.75rem;
             font-weight: 700;
-            color: #1e293b;
+            color: var(--color-text, #1e293b);
         }
         
         .metric-subtitle {
             font-size: 0.85rem;
-            color: #64748b;
+            color: var(--color-muted, #64748b);
             margin-top: 0.25rem;
         }
         
-        .status-good { color: #10b981; }
-        .status-warning { color: #f59e0b; }
-        .status-bad { color: #dc2626; }
+        .status-good { color: var(--color-success, #10b981); font-weight: 600; }
+        .status-warning { color: var(--color-warning, #f59e0b); font-weight: 600; }
+        .status-bad { color: var(--color-danger, #dc2626); font-weight: 600; }
+        .status-neutral { color: var(--color-muted, #64748b); }
+
+        a.btn { text-decoration: none; }
+        .app-header .btn-secondary[aria-current="page"] {
+            background: rgba(255, 255, 255, 0.4);
+            border-color: #ffffff;
+            font-weight: 700;
+        }
     </style>
 </head>
 <body>
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
-                <span class="logo-icon">📊</span>
+                {% if config.use_logo_image %}
+                    <img src="{{ url_for('static', filename=config.logo_path) }}" 
+                         alt="Logo" style="height: 45px;">
+                {% else %}
+                    <span class="logo-icon">📈</span>
+                {% endif %}
                 <div>
-                    <h1>EVM & S-Curves</h1>
-                    <p class="subtitle">Earned Value Management</p>
+                    <h1>{{ config.app_title }} — EVM</h1>
+                    <p class="subtitle">Earned Value Management &amp; S-Curves</p>
                 </div>
             </div>
             <div class="header-actions">
-                <a href="/" class="btn btn-secondary">← Dashboard</a>
+                <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
                 <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/evm" class="btn btn-secondary" aria-current="page">📈 EVM</a>
+                <a href="/health" class="btn btn-secondary">🏥 Health</a>
             </div>
         </div>
     </header>
 
     <main class="app-main">
-        <div id="loadingMessage" style="text-align:center; padding:3rem;">
+        <!-- LOADING / ERROR MESSAGE -->
+        <div id="loadingMessage" class="loading-screen" style="display:flex;">
+            <div class="spinner"></div>
             <p>Loading EVM data...</p>
         </div>
 
+        <!-- EVM CONTENT (shown on data load) -->
         <div id="evmContent" style="display:none;">
             <div class="file-info-bar">
                 <span>📁 <strong id="fileName">--</strong></span>
@@ -90,49 +133,58 @@
             <!-- S-Curve -->
             <div class="chart-card" style="margin-bottom:2rem;">
                 <h3>📈 Project S-Curve</h3>
-                <p style="color:#64748b; font-size:0.85rem; margin-bottom:1rem;">
-                    Cumulative value over time showing Planned (PV), Earned (EV), and Actual Cost (AC)
+                <p style="color:var(--color-muted, #64748b); font-size:0.85rem; margin-bottom:1rem;">
+                    Cumulative value over time showing Planned Value (PV), Earned Value (EV), and Actual Cost (AC) through Data Date.
                 </p>
-                <div style="height:400px;">
+                <div id="scurveError" style="display:none; color:var(--color-danger, #dc2626); padding:0.5rem 0;"></div>
+                <div style="height:400px; position:relative;">
                     <canvas id="scurveChart"></canvas>
                 </div>
             </div>
 
-            <!-- Explanation -->
+            <!-- Explanation / Glossary -->
             <div class="dcma-section">
                 <h3>📖 What Do These Metrics Mean?</h3>
-                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:1.25rem; margin-top:1rem;">
                     <div>
                         <h4>SPI (Schedule Performance Index)</h4>
-                        <p style="font-size:0.9rem; color:#64748b;">
+                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
                             <strong>≥ 1.0:</strong> Ahead of schedule ✅<br>
-                            <strong>&lt; 1.0:</strong> Behind schedule ❌
+                            <strong>0.95 – 0.99:</strong> Slightly behind ⚠️<br>
+                            <strong>&lt; 0.95:</strong> Significantly behind ❌
                         </p>
                     </div>
                     <div>
                         <h4>CPI (Cost Performance Index)</h4>
-                        <p style="font-size:0.9rem; color:#64748b;">
+                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
                             <strong>≥ 1.0:</strong> Under budget ✅<br>
-                            <strong>&lt; 1.0:</strong> Over budget ❌
+                            <strong>0.95 – 0.99:</strong> Slightly over budget ⚠️<br>
+                            <strong>&lt; 0.95:</strong> Significantly over budget ❌
                         </p>
                     </div>
                     <div>
-                        <h4>EAC (Estimate at Completion)</h4>
-                        <p style="font-size:0.9rem; color:#64748b;">
-                            Forecasted total cost when project is complete.
+                        <h4>EAC &amp; ETC</h4>
+                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
+                            <strong>EAC:</strong> Forecasted total cost at completion (BAC / CPI).<br>
+                            <strong>ETC:</strong> Forecasted remaining cost (EAC − AC).
                         </p>
                     </div>
                     <div>
                         <h4>VAC (Variance at Completion)</h4>
-                        <p style="font-size:0.9rem; color:#64748b;">
-                            Difference between budget and forecasted final cost.<br>
-                            <strong>Positive:</strong> Under budget ✅
+                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
+                            Difference between original budget and forecasted final cost (BAC − EAC).<br>
+                            <strong>Positive:</strong> Forecasted under budget ✅
                         </p>
                     </div>
                 </div>
             </div>
         </div>
     </main>
+
+    <!-- FOOTER -->
+    <footer class="app-footer">
+        <p>&copy; {{ config.footer_year }} {{ config.company_name }} | {{ config.footer_text }}</p>
+    </footer>
 
     <script src="{{ url_for('static', filename='evm.js') }}"></script>
 </body>

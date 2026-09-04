@@ -8,28 +8,64 @@ Generates professional PDF reports for:
 Supports:
 - Standard filter (DCMA/DOE/NASA/GAO/AACE/Industry/all)
 - Severity filter (all/critical/high/medium)
-- Fixed font leading for giant score text (no overlap)
+- XML-safe Paragraph text
+- Capped activity lists
+- Page numbers
 """
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    PageBreak, HRFlowable
+    PageBreak, HRFlowable, KeepTogether
 )
 from datetime import datetime
+from xml.sax.saxutils import escape
 import io
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    from config import (
+        COMPANY_NAME,
+        APP_TITLE,
+        MAX_ITEMS_PER_CHECK_PDF,
+        MAX_TOP_ACTIONS_PDF,
+        get_theme,
+    )
+except ImportError:
+    COMPANY_NAME = "P6 Schedule Analyzer"
+    APP_TITLE = "P6 Schedule Analyzer"
+    MAX_ITEMS_PER_CHECK_PDF = 50
+    MAX_TOP_ACTIONS_PDF = 15
+
+    def get_theme():
+        return {
+            'primary': '#1e40af',
+            'success': '#10b981',
+            'warning': '#f59e0b',
+            'danger': '#dc2626',
+            'muted': '#64748b',
+        }
 
 
-# Severity filter helper
 SEVERITY_LEVELS = {
     'critical': ['critical'],
     'high': ['critical', 'high'],
     'medium': ['critical', 'high', 'medium'],
-    'all': ['critical', 'high', 'medium', 'low', 'info']
+    'all': ['critical', 'high', 'medium', 'low', 'info'],
+}
+
+SEVERITY_WEIGHT = {
+    'critical': 100,
+    'high': 50,
+    'medium': 20,
+    'low': 5,
+    'info': 0,
 }
 
 
@@ -37,23 +73,168 @@ class PDFReportGenerator:
     """Generates professional PDF reports from health analysis data."""
 
     def __init__(self, health_data, file_name='', severity_filter='all'):
-        self.data = health_data
-        self.file_name = file_name
+        self.data = health_data or {}
+        self.file_name = file_name or ''
         self.severity_filter = (severity_filter or 'all').lower()
         self.allowed_severities = SEVERITY_LEVELS.get(
             self.severity_filter, SEVERITY_LEVELS['all']
         )
+        self.theme = get_theme()
+        self.primary = colors.HexColor(self.theme.get('primary', '#1e40af'))
+        self.danger = colors.HexColor(self.theme.get('danger', '#dc2626'))
+        self.muted = colors.HexColor(self.theme.get('muted', '#64748b'))
         self.styles = self._create_styles()
+        self.max_items = int(MAX_ITEMS_PER_CHECK_PDF or 50)
+        self.max_top = int(MAX_TOP_ACTIONS_PDF or 15)
+
+    # ═══════════════════════════════════════════════════════
+    # SAFETY HELPERS
+    # ═══════════════════════════════════════════════════════
+
+    def _safe(self, text):
+        """Escape dynamic text for ReportLab Paragraph (XML)."""
+        if text is None:
+            return ''
+        return escape(str(text))
+
+    def _p(self, text, style_name='CheckBody'):
+        """Paragraph with pre-escaped plain text."""
+        style = self.styles[style_name]
+        return Paragraph(self._safe(text), style)
+
+    def _p_markup(self, markup, style_name='CheckBody'):
+        """
+        Paragraph with intentional markup.
+        Caller must escape dynamic fragments with _safe() before inserting.
+        """
+        return Paragraph(str(markup), self.styles[style_name])
+
+    def _matches_severity(self, check_or_action):
+        sev = (check_or_action.get('severity') or 'low').lower()
+        return sev in self.allowed_severities
+
+    def _activity_line(self, item):
+        code = self._safe(item.get('code', ''))
+        name = self._safe(item.get('name', ''))
+        wbs = self._safe(item.get('wbs', ''))
+        line = f"• {code}"
+        if name:
+            line += f" - {name}"
+        if wbs:
+            line += f" ({wbs})"
+        return line
+
+    def _render_failed_items(self, story, failed_items, title="Affected Activities"):
+        items = failed_items or []
+        if not items:
+            story.append(self._p_markup(
+                f"<i>{self._safe('No activity list available for this metric.')}</i>",
+                'CheckBody'
+            ))
+            return
+
+        story.append(self._p_markup(
+            f"<b>{self._safe(title)}:</b>",
+            'CheckBody'
+        ))
+
+        shown = items[: self.max_items]
+        for item in shown:
+            story.append(self._p_markup(self._activity_line(item), 'CheckBody'))
+
+        leftover = len(items) - len(shown)
+        if leftover > 0:
+            story.append(self._p_markup(
+                f"<i>… and {leftover} more (see Excel export for full list)</i>",
+                'CheckBody'
+            ))
+
+    def _iter_failed_checks(self):
+        """Yield (std_name, category_name, check) for failed checks matching severity."""
+        for std_name, std_data in (self.data.get('standards') or {}).items():
+            for cat in std_data.get('categories') or []:
+                cat_name = cat.get('name', '')
+                for check in cat.get('checks') or []:
+                    if check.get('status') != 'fail':
+                        continue
+                    if not self._matches_severity(check):
+                        continue
+                    yield std_name, cat_name, check
+
+    def _build_priority_actions(self, limit=None):
+        """
+        Build priority actions from full standards tree (severity-aware),
+        falling back to top_actions if standards missing.
+        """
+        actions = []
+        for std_name, cat_name, check in self._iter_failed_checks():
+            count = check.get('count', 0) or 0
+            sev = (check.get('severity') or 'low').lower()
+            priority = SEVERITY_WEIGHT.get(sev, 5) + min(count, 100)
+            actions.append({
+                'standard': std_name,
+                'category': cat_name,
+                'id': check.get('id'),
+                'name': check.get('name'),
+                'severity': sev,
+                'count': count,
+                'total': check.get('total', 0),
+                'percentage': check.get('percentage', 0),
+                'value': check.get('value'),
+                'threshold': check.get('threshold', ''),
+                'description': check.get('description', ''),
+                'recommendation': check.get('recommendation', ''),
+                'failed_items': check.get('failed_items') or [],
+                'priority': priority,
+            })
+
+        if not actions:
+            # Fallback to engine top_actions
+            for a in (self.data.get('top_actions') or []):
+                if self._matches_severity(a):
+                    actions.append(a)
+
+        actions.sort(key=lambda x: x.get('priority', 0), reverse=True)
+        if limit is not None:
+            return actions[:limit]
+        return actions
+
+    def _score_color(self, score):
+        try:
+            s = float(score)
+        except (TypeError, ValueError):
+            s = 0
+        if s >= 90:
+            return colors.HexColor('#059669')
+        if s >= 80:
+            return colors.HexColor('#2563eb')
+        if s >= 70:
+            return colors.HexColor('#d97706')
+        return colors.HexColor('#dc2626')
+
+    def _severity_color_hex(self, severity):
+        return {
+            'CRITICAL': '#7f1d1d',
+            'HIGH': '#dc2626',
+            'MEDIUM': '#f59e0b',
+            'LOW': '#64748b',
+            'INFO': '#64748b',
+        }.get((severity or 'LOW').upper(), '#64748b')
+
+    # ═══════════════════════════════════════════════════════
+    # STYLES
+    # ═══════════════════════════════════════════════════════
 
     def _create_styles(self):
         styles = getSampleStyleSheet()
+        primary_hex = self.theme.get('primary', '#1e40af')
 
         styles.add(ParagraphStyle(
             name='CustomTitle',
             parent=styles['Heading1'],
-            fontSize=24,
-            leading=28,
-            textColor=colors.HexColor('#1e40af'),
+            fontSize=22,
+            leading=26,
+            textColor=colors.HexColor(primary_hex),
             spaceAfter=8,
             alignment=TA_CENTER,
             fontName='Helvetica-Bold'
@@ -62,31 +243,30 @@ class PDFReportGenerator:
         styles.add(ParagraphStyle(
             name='CustomSubtitle',
             parent=styles['Normal'],
-            fontSize=13,
-            leading=16,
+            fontSize=12,
+            leading=15,
             textColor=colors.HexColor('#64748b'),
             alignment=TA_CENTER,
-            spaceAfter=15
+            spaceAfter=12
         ))
 
         styles.add(ParagraphStyle(
             name='SectionHeader',
             parent=styles['Heading2'],
-            fontSize=15,
+            fontSize=14,
             leading=18,
-            textColor=colors.HexColor('#1e40af'),
+            textColor=colors.HexColor(primary_hex),
             spaceBefore=12,
             spaceAfter=8,
             fontName='Helvetica-Bold'
         ))
 
-        # FIXED: Added leading=54 to prevent overlap with 48pt font!
         styles.add(ParagraphStyle(
             name='ScoreBig',
             parent=styles['Normal'],
             fontSize=48,
             leading=54,
-            textColor=colors.HexColor('#1e40af'),
+            textColor=colors.HexColor(primary_hex),
             alignment=TA_CENTER,
             fontName='Helvetica-Bold',
             spaceBefore=6,
@@ -121,7 +301,8 @@ class PDFReportGenerator:
             textColor=colors.HexColor('#334155'),
             leading=13,
             spaceBefore=2,
-            spaceAfter=2
+            spaceAfter=2,
+            alignment=TA_LEFT
         ))
 
         styles.add(ParagraphStyle(
@@ -135,16 +316,25 @@ class PDFReportGenerator:
             fontName='Helvetica-Bold'
         ))
 
+        styles.add(ParagraphStyle(
+            name='FooterText',
+            parent=styles['Normal'],
+            fontSize=8,
+            textColor=colors.HexColor('#64748b'),
+            alignment=TA_CENTER
+        ))
+
         return styles
 
     def _recommendation_box(self, text):
-        """Create a clean recommendation box that does not overlap text."""
         if not text:
-            return Spacer(1, 0.1 * cm)
+            return Spacer(1, 0.05 * cm)
 
-        clean = str(text).replace('\n', ' ').strip()
+        clean = self._safe(str(text).replace('\n', ' ').strip())
+        if len(clean) > 800:
+            clean = clean[:800] + '…'
+
         para = Paragraph(f"💡 {clean}", self.styles['RecommendationText'])
-
         table = Table([[para]], colWidths=[16 * cm])
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FEF3C7')),
@@ -157,81 +347,107 @@ class PDFReportGenerator:
         ]))
         return table
 
-    def _matches_severity(self, check_or_action):
-        """Check if item matches the severity filter."""
-        sev = (check_or_action.get('severity') or 'low').lower()
-        return sev in self.allowed_severities
+    def _add_page_decor(self, canvas, doc):
+        canvas.saveState()
+        canvas.setFont('Helvetica', 8)
+        canvas.setFillColor(colors.HexColor('#64748b'))
+        page_w, _ = A4
+        fname = (self.file_name or APP_TITLE)[:50]
+        canvas.drawString(1.5 * cm, 0.6 * cm, fname)
+        canvas.drawRightString(page_w - 1.5 * cm, 0.6 * cm, f"Page {doc.page}")
+        canvas.drawCentredString(page_w / 2, 0.6 * cm, f"{COMPANY_NAME} | Confidential")
+        canvas.restoreState()
 
-    def generate_executive_report(self):
-        """Create the executive summary PDF (respects severity filter & no overlaps)."""
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer, pagesize=A4,
-            topMargin=1 * cm, bottomMargin=1 * cm,
-            leftMargin=1.5 * cm, rightMargin=1.5 * cm
+    def _build_doc(self, buffer):
+        return SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            topMargin=1.2 * cm,
+            bottomMargin=1.4 * cm,
+            leftMargin=1.5 * cm,
+            rightMargin=1.5 * cm,
+            title=f"{APP_TITLE} Health Report",
+            author=COMPANY_NAME,
         )
 
+    # ═══════════════════════════════════════════════════════
+    # EXECUTIVE REPORT
+    # ═══════════════════════════════════════════════════════
+
+    def generate_executive_report(self):
+        buffer = io.BytesIO()
+        doc = self._build_doc(buffer)
         story = []
 
-        story.append(Spacer(1, 0.5 * cm))
+        selected_std = self.data.get('selected_standard', 'all')
+        score = self.data.get('overall_score', 0)
+
+        story.append(Spacer(1, 0.3 * cm))
         story.append(Paragraph("SCHEDULE HEALTH", self.styles['CustomTitle']))
         story.append(Paragraph("Executive Assessment Report", self.styles['CustomSubtitle']))
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(Spacer(1, 0.2 * cm))
 
-        story.append(Paragraph(
-            f"<b>Project File:</b> {self.file_name}",
-            self.styles['CheckBody']
-        ))
-        story.append(Paragraph(
-            f"<b>Analysis Date:</b> {self.data.get('analysis_date', datetime.now().strftime('%Y-%m-%d %H:%M'))}",
-            self.styles['CheckBody']
-        ))
-        story.append(Paragraph(
-            f"<b>Severity Filter:</b> {self.severity_filter.upper()}",
-            self.styles['CheckBody']
-        ))
-
-        proj = self.data.get('project_info', {})
-        if proj.get('name'):
-            story.append(Paragraph(
-                f"<b>Project Name:</b> {proj.get('name', 'Unknown')}",
-                self.styles['CheckBody']
-            ))
-        if proj.get('data_date'):
-            story.append(Paragraph(
-                f"<b>Data Date:</b> {proj.get('data_date', '')}",
-                self.styles['CheckBody']
-            ))
-
-        story.append(Spacer(1, 0.6 * cm))
-
-        # ─── OVERALL HEALTH SCORE ───
-        score = self.data.get('overall_score', 0)
-        story.append(Paragraph("OVERALL HEALTH SCORE", self.styles['SectionHeader']))
-        story.append(Paragraph(f"{score}", self.styles['ScoreBig']))
-        story.append(Paragraph("out of 100", self.styles['ScoreSub']))
-
-        story.append(Spacer(1, 0.4 * cm))
-
-        # Summary Stats
-        stats_data = [
-            ['Metric', 'Value'],
-            ['Total Checks Performed', str(self.data.get('total_checks', 0))],
-            ['Checks Passed', f"{self.data.get('passed_checks', 0)} ({round(self.data.get('pass_rate', 0), 1)}%)"],
-            ['Checks Failed', str(self.data.get('failed_checks', 0))],
-            ['Critical Failures', str(self.data.get('critical_failures', 0))],
-            ['High-Severity Failures', str(self.data.get('high_failures', 0))],
-            ['Severity Filter Applied', self.severity_filter.upper()],
+        meta_lines = [
+            f"<b>Project File:</b> {self._safe(self.file_name)}",
+            f"<b>Analysis Date:</b> {self._safe(self.data.get('analysis_date', datetime.now().strftime('%Y-%m-%d %H:%M')))}",
+            f"<b>Standard Scope:</b> {self._safe(str(selected_std).upper())}",
+            f"<b>Severity Filter (action lists):</b> {self._safe(self.severity_filter.upper())}",
         ]
+        proj = self.data.get('project_info') or {}
+        if proj.get('name'):
+            meta_lines.append(f"<b>Project Name:</b> {self._safe(proj.get('name'))}")
+        if proj.get('data_date'):
+            meta_lines.append(f"<b>Data Date:</b> {self._safe(proj.get('data_date'))}")
 
-        stats_table = Table(stats_data, colWidths=[9 * cm, 7 * cm])
+        for line in meta_lines:
+            story.append(self._p_markup(line, 'CheckBody'))
+
+        story.append(Spacer(1, 0.35 * cm))
+        story.append(self._p_markup(
+            "<i>Note: Summary statistics below reflect the full analysis run. "
+            "Priority actions and detailed failures respect the severity filter.</i>",
+            'CheckBody'
+        ))
+
+        # Score
+        story.append(Paragraph("OVERALL HEALTH SCORE", self.styles['SectionHeader']))
+        score_style = ParagraphStyle(
+            'ScoreBigDynamic',
+            parent=self.styles['ScoreBig'],
+            textColor=self._score_color(score),
+        )
+        story.append(Paragraph(self._safe(str(score)), score_style))
+        story.append(Paragraph("out of 100 (weighted)", self.styles['ScoreSub']))
+
+        # Full-run stats table
+        stats_data = [
+            [Paragraph('<b>Metric</b>', self.styles['CheckBody']),
+             Paragraph('<b>Value</b>', self.styles['CheckBody'])],
+            ['Total Checks Performed (full run)', str(self.data.get('total_checks', 0))],
+            ['Checks Passed', f"{self.data.get('passed_checks', 0)} ({self.data.get('pass_rate', 0)}%)"],
+            ['Checks Failed', str(self.data.get('failed_checks', 0))],
+            ['Critical Failures (full run)', str(self.data.get('critical_failures', 0))],
+            ['High-Severity Failures (full run)', str(self.data.get('high_failures', 0))],
+            ['Action list severity filter', self.severity_filter.upper()],
+        ]
+        # Escape table text via Paragraph where needed
+        stats_table_data = []
+        for i, row in enumerate(stats_data):
+            if i == 0:
+                stats_table_data.append(row)
+            else:
+                stats_table_data.append([
+                    Paragraph(self._safe(row[0]), self.styles['CheckBody']),
+                    Paragraph(self._safe(str(row[1])), self.styles['CheckBody']),
+                ])
+
+        stats_table = Table(stats_table_data, colWidths=[10 * cm, 6 * cm])
         stats_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
+            ('BACKGROUND', (0, 0), (-1, 0), self.primary),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
             ('TOPPADDING', (0, 0), (-1, -1), 6),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
@@ -242,371 +458,407 @@ class PDFReportGenerator:
 
         story.append(PageBreak())
 
-        # ─── Standards Compliance ───
+        # Standards compliance
         story.append(Paragraph("STANDARDS COMPLIANCE SUMMARY", self.styles['SectionHeader']))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#1e40af')))
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(HRFlowable(width="100%", thickness=2, color=self.primary))
+        story.append(Spacer(1, 0.35 * cm))
 
-        std_data_rows = [['Standard', 'Score', 'Grade', 'Passed', 'Failed', 'Critical']]
-        for std_name, std_score in self.data.get('standard_scores', {}).items():
-            std_data_rows.append([
-                std_name,
-                f"{std_score.get('score', 0)}",
-                std_score.get('grade', '-'),
+        std_header = ['Standard', 'Score', 'Grade', 'Passed', 'Failed', 'Critical']
+        std_rows = [std_header]
+        for std_name, std_score in (self.data.get('standard_scores') or {}).items():
+            std_rows.append([
+                str(std_name),
+                str(std_score.get('score', 0)),
+                str(std_score.get('grade', '-')),
                 str(std_score.get('passed', 0)),
                 str(std_score.get('failed', 0)),
                 str(std_score.get('critical_failures', 0)),
             ])
 
-        std_table = Table(std_data_rows, colWidths=[4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm, 2.4 * cm])
+        if len(std_rows) == 1:
+            std_rows.append(['—', '—', '—', '—', '—', '—'])
+
+        std_table_data = []
+        for i, row in enumerate(std_rows):
+            std_table_data.append([
+                Paragraph(f"<b>{self._safe(c)}</b>" if i == 0 else self._safe(c),
+                          self.styles['CheckBody'])
+                for c in row
+            ])
+
+        std_table = Table(
+            std_table_data,
+            colWidths=[3.5 * cm, 2.2 * cm, 2.2 * cm, 2.5 * cm, 2.5 * cm, 2.5 * cm]
+        )
         std_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e40af')),
+            ('BACKGROUND', (0, 0), (-1, 0), self.primary),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1),
              [colors.HexColor('#f8fafc'), colors.white]),
         ]))
         story.append(std_table)
+        story.append(Spacer(1, 0.6 * cm))
 
-        story.append(Spacer(1, 0.8 * cm))
-
-        # ─── Top Priority Actions (filtered) ───
+        # Top priority actions (severity filtered, rebuilt from full set)
         story.append(Paragraph(
             f"TOP PRIORITY ACTIONS (Severity: {self.severity_filter.upper()})",
             self.styles['SectionHeader']
         ))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#dc2626')))
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(HRFlowable(width="100%", thickness=2, color=self.danger))
+        story.append(Spacer(1, 0.25 * cm))
 
-        top_actions = self.data.get('top_actions', []) or []
-        filtered_actions = [a for a in top_actions if self._matches_severity(a)][:10]
+        filtered_actions = self._build_priority_actions(limit=min(10, self.max_top))
 
         if not filtered_actions:
-            story.append(Paragraph(
-                f"<i>No actions found matching severity filter: {self.severity_filter.upper()}</i>",
-                self.styles['CheckBody']
+            story.append(self._p_markup(
+                f"<i>No actions found matching severity filter: "
+                f"{self._safe(self.severity_filter.upper())}</i>",
+                'CheckBody'
             ))
         else:
             for idx, action in enumerate(filtered_actions, 1):
+                block = []
                 severity = (action.get('severity') or 'low').upper()
-                severity_color = {
-                    'CRITICAL': '#7f1d1d',
-                    'HIGH': '#dc2626',
-                    'MEDIUM': '#f59e0b',
-                    'LOW': '#64748b'
-                }.get(severity, '#64748b')
+                sev_hex = self._severity_color_hex(severity)
 
-                action_text = (
-                    f"<b>{idx}. [{action.get('id', '')}] {action.get('name', '')}</b><br/>"
+                title = (
+                    f"<b>{idx}. [{self._safe(action.get('id', ''))}] "
+                    f"{self._safe(action.get('name', ''))}</b><br/>"
                     f"<font size='9' color='#64748b'>"
-                    f"Standard: {action.get('standard', '')} | "
-                    f"Severity: <font color='{severity_color}'><b>{severity}</b></font> | "
-                    f"Affected: {action.get('count', 0)} activities ({action.get('percentage', 0)}%)"
+                    f"Standard: {self._safe(action.get('standard', ''))} | "
+                    f"Severity: <font color='{sev_hex}'><b>{self._safe(severity)}</b></font> | "
+                    f"Affected: {self._safe(action.get('count', 0))} "
+                    f"({self._safe(action.get('percentage', 0))}%)"
                     f"</font>"
                 )
-                story.append(Paragraph(action_text, self.styles['CheckBody']))
+                block.append(self._p_markup(title, 'CheckBody'))
 
                 if action.get('recommendation'):
-                    story.append(Spacer(1, 0.1 * cm))
-                    story.append(self._recommendation_box(action.get('recommendation')))
+                    block.append(Spacer(1, 0.08 * cm))
+                    block.append(self._recommendation_box(action.get('recommendation')))
 
-                failed_items = action.get('failed_items', []) or []
-                if failed_items:
-                    story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
-                    for item in failed_items[:10]:
-                        code = item.get('code', '')
-                        name = item.get('name', '')
-                        wbs = item.get('wbs', '')
-                        line = f"• {code}"
-                        if name:
-                            line += f" - {name}"
-                        if wbs:
-                            line += f" ({wbs})"
-                        story.append(Paragraph(line, self.styles['CheckBody']))
+                items = action.get('failed_items') or []
+                if items:
+                    block.append(self._p_markup("<b>Affected Activities:</b>", 'CheckBody'))
+                    for item in items[:10]:
+                        block.append(self._p_markup(self._activity_line(item), 'CheckBody'))
+                    if len(items) > 10:
+                        block.append(self._p_markup(
+                            f"<i>… and {len(items) - 10} more</i>", 'CheckBody'
+                        ))
 
-                story.append(Spacer(1, 0.3 * cm))
+                block.append(Spacer(1, 0.25 * cm))
+                story.append(KeepTogether(block))
 
         story.append(PageBreak())
 
-        # ─── Detailed Standards Summary (filtered) ───
+        # Detailed standards peek
         story.append(Paragraph("DETAILED STANDARDS SUMMARY", self.styles['SectionHeader']))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#1e40af')))
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(HRFlowable(width="100%", thickness=2, color=self.primary))
+        story.append(Spacer(1, 0.35 * cm))
 
-        for std_name, std_data in self.data.get('standards', {}).items():
-            story.append(Paragraph(f"<b>{std_name}</b>", self.styles['SectionHeader']))
-            story.append(Paragraph(
-                f"<i>{std_data.get('description', '')}</i>",
-                self.styles['CheckBody']
+        for std_name, std_data in (self.data.get('standards') or {}).items():
+            story.append(self._p_markup(
+                f"<b>{self._safe(std_name)}</b>", 'SectionHeader'
             ))
-            story.append(Spacer(1, 0.2 * cm))
+            if std_data.get('description'):
+                story.append(self._p_markup(
+                    f"<i>{self._safe(std_data.get('description'))}</i>", 'CheckBody'
+                ))
+            story.append(Spacer(1, 0.15 * cm))
 
-            for category in std_data.get('categories', []):
-                total_checks = len(category.get('checks', []))
-                passed = sum(1 for c in category.get('checks', []) if c.get('passed'))
-
-                story.append(Paragraph(
-                    f"<b>• {category.get('name', '')}:</b> {passed}/{total_checks} passed",
-                    self.styles['CheckBody']
+            for category in std_data.get('categories') or []:
+                checks = category.get('checks') or []
+                total_checks = len(checks)
+                passed = sum(1 for c in checks if c.get('passed'))
+                story.append(self._p_markup(
+                    f"<b>• {self._safe(category.get('name', ''))}:</b> "
+                    f"{passed}/{total_checks} passed",
+                    'CheckBody'
                 ))
 
                 failed_checks = [
-                    c for c in category.get('checks', [])
+                    c for c in checks
                     if c.get('status') == 'fail' and self._matches_severity(c)
                 ]
+                for check in failed_checks[:5]:
+                    story.append(self._p_markup(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;❌ <b>{self._safe(check.get('id'))}:</b> "
+                        f"{self._safe(check.get('name'))} "
+                        f"({self._safe(check.get('count', 0))} affected)",
+                        'CheckBody'
+                    ))
                 if failed_checks:
-                    for check in failed_checks[:5]:
-                        story.append(Paragraph(
-                            f"&nbsp;&nbsp;&nbsp;&nbsp;❌ <b>{check.get('id')}:</b> {check.get('name')} "
-                            f"({check.get('count', 0)} affected)",
-                            self.styles['CheckBody']
-                        ))
-                    story.append(Spacer(1, 0.15 * cm))
+                    story.append(Spacer(1, 0.12 * cm))
 
-        story.append(Spacer(1, 1 * cm))
+        story.append(Spacer(1, 0.8 * cm))
         story.append(Paragraph(
-            "<font size='8' color='#64748b'><i>Generated by P6 Schedule Analyzer | Confidential</i></font>",
+            f"<font size='8' color='#64748b'><i>Generated by {self._safe(APP_TITLE)} | "
+            f"{self._safe(COMPANY_NAME)} | Confidential</i></font>",
             self.styles['CheckBody']
         ))
 
-        doc.build(story)
+        doc.build(
+            story,
+            onFirstPage=self._add_page_decor,
+            onLaterPages=self._add_page_decor,
+        )
         buffer.seek(0)
         return buffer
 
-    def generate_actions_report(self):
-        """Create the detailed action list PDF (respects severity filter)."""
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer, pagesize=A4,
-            topMargin=1 * cm, bottomMargin=1 * cm,
-            leftMargin=1.5 * cm, rightMargin=1.5 * cm
-        )
+    # ═══════════════════════════════════════════════════════
+    # ACTIONS REPORT
+    # ═══════════════════════════════════════════════════════
 
+    def generate_actions_report(self):
+        buffer = io.BytesIO()
+        doc = self._build_doc(buffer)
         story = []
 
+        selected_std = self.data.get('selected_standard', 'all')
+
         story.append(Paragraph("SCHEDULE HEALTH ACTIONS", self.styles['CustomTitle']))
-        story.append(Paragraph("Failed Checks & Corrective Action List", self.styles['CustomSubtitle']))
         story.append(Paragraph(
-            f"<i>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | File: {self.file_name}</i>",
-            self.styles['CheckBody']
+            "Failed Checks & Corrective Action List",
+            self.styles['CustomSubtitle']
         ))
-        story.append(Paragraph(
-            f"<b>Severity Filter:</b> {self.severity_filter.upper()}",
-            self.styles['CheckBody']
+        story.append(self._p_markup(
+            f"<i>Generated: {self._safe(datetime.now().strftime('%Y-%m-%d %H:%M'))} | "
+            f"File: {self._safe(self.file_name)}</i>",
+            'CheckBody'
         ))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#dc2626')))
-        story.append(Spacer(1, 0.5 * cm))
+        story.append(self._p_markup(
+            f"<b>Standard Scope:</b> {self._safe(str(selected_std).upper())} | "
+            f"<b>Severity Filter:</b> {self._safe(self.severity_filter.upper())}",
+            'CheckBody'
+        ))
+        story.append(HRFlowable(width="100%", thickness=2, color=self.danger))
+        story.append(Spacer(1, 0.4 * cm))
 
-        # ─── Summary Box ───
+        # Summary box
         summary_data = [
-            ['Total Failed Checks', str(self.data.get('failed_checks', 0))],
-            ['Critical Failures', str(self.data.get('critical_failures', 0))],
-            ['High Severity Failures', str(self.data.get('high_failures', 0))],
+            ['Total Failed Checks (full run)', str(self.data.get('failed_checks', 0))],
+            ['Critical Failures (full run)', str(self.data.get('critical_failures', 0))],
+            ['High Severity Failures (full run)', str(self.data.get('high_failures', 0))],
             ['Overall Health Score', f"{self.data.get('overall_score', 0)} / 100"],
-            ['Severity Filter', self.severity_filter.upper()],
+            ['This report severity filter', self.severity_filter.upper()],
         ]
-
-        summary_table = Table(summary_data, colWidths=[9 * cm, 7 * cm])
+        summary_table_data = [
+            [
+                Paragraph(self._safe(a), self.styles['CheckBody']),
+                Paragraph(self._safe(b), self.styles['CheckBody']),
+            ]
+            for a, b in summary_data
+        ]
+        summary_table = Table(summary_table_data, colWidths=[10 * cm, 6 * cm])
         summary_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#FEF3C7')),
             ('BACKGROUND', (1, 0), (1, -1), colors.white),
             ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
             ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
             ('TOPPADDING', (0, 0), (-1, -1), 6),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
         ]))
         story.append(summary_table)
-        story.append(Spacer(1, 0.8 * cm))
+        story.append(Spacer(1, 0.55 * cm))
 
-        # ═══════════════════════════════════════════════════
-        # TOP PRIORITY ACTIONS (with Affected Activities)
-        # ═══════════════════════════════════════════════════
+        # Top priority
         story.append(Paragraph(
             f"TOP PRIORITY ACTIONS (Severity: {self.severity_filter.upper()})",
             self.styles['SectionHeader']
         ))
-        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#dc2626')))
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(HRFlowable(width="100%", thickness=2, color=self.danger))
+        story.append(Spacer(1, 0.25 * cm))
 
-        top_actions = self.data.get('top_actions', []) or []
-        filtered_top = [a for a in top_actions if self._matches_severity(a)][:15]
+        filtered_top = self._build_priority_actions(limit=self.max_top)
 
         if not filtered_top:
-            story.append(Paragraph(
-                f"<i>No priority actions matched severity filter: {self.severity_filter.upper()}</i>",
-                self.styles['CheckBody']
+            story.append(self._p_markup(
+                f"<i>No priority actions matched severity filter: "
+                f"{self._safe(self.severity_filter.upper())}</i>",
+                'CheckBody'
             ))
         else:
             for idx, action in enumerate(filtered_top, 1):
-                severity = (action.get('severity') or 'low').upper()
-                severity_color = {
-                    'CRITICAL': '#7f1d1d',
-                    'HIGH': '#dc2626',
-                    'MEDIUM': '#f59e0b',
-                    'LOW': '#64748b'
-                }.get(severity, '#64748b')
-
-                title = (
-                    f"<b>{idx}. "
-                    f"<font color='{severity_color}'>[{severity}]</font> "
-                    f"{action.get('id', '')}: {action.get('name', '')}</b>"
-                )
-                story.append(Paragraph(title, self.styles['CheckTitle']))
-
-                meta_parts = []
-                if action.get('standard'):
-                    meta_parts.append(f"Standard: {action.get('standard')}")
-                if action.get('category'):
-                    meta_parts.append(f"Category: {action.get('category')}")
-                if action.get('count') is not None:
-                    meta_parts.append(
-                        f"Affected: {action.get('count', 0)} "
-                        f"({action.get('percentage', 0)}%)"
-                    )
-                elif action.get('value') is not None:
-                    meta_parts.append(f"Value: {action.get('value')}")
-                if action.get('threshold'):
-                    meta_parts.append(f"Threshold: {action.get('threshold')}")
-
-                if meta_parts:
-                    story.append(Paragraph(" | ".join(meta_parts), self.styles['CheckBody']))
-
-                if action.get('description'):
-                    story.append(Paragraph(str(action.get('description')), self.styles['CheckBody']))
-
-                if action.get('recommendation'):
-                    story.append(Spacer(1, 0.1 * cm))
-                    story.append(self._recommendation_box(action.get('recommendation')))
-
-                failed_items = action.get('failed_items', []) or []
-                if failed_items:
-                    story.append(Spacer(1, 0.15 * cm))
-                    story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
-                    for item in failed_items:
-                        code = item.get('code', '')
-                        name = item.get('name', '')
-                        wbs = item.get('wbs', '')
-                        line = f"• {code}"
-                        if name:
-                            line += f" - {name}"
-                        if wbs:
-                            line += f" ({wbs})"
-                        story.append(Paragraph(line, self.styles['CheckBody']))
-                else:
-                    story.append(Paragraph(
-                        "<i>No activity list available for this metric.</i>",
-                        self.styles['CheckBody']
-                    ))
-
-                story.append(Spacer(1, 0.35 * cm))
+                block = self._render_action_block(idx, action)
+                story.append(KeepTogether(block))
 
         story.append(PageBreak())
 
-        # ═══════════════════════════════════════════════════
-        # DETAILED FAILED CHECKS PER STANDARD (filtered)
-        # ═══════════════════════════════════════════════════
+        # Full failed checks by standard
         story.append(Paragraph(
-            f"DETAILED FAILED CHECKS & RECOMMENDATIONS (Severity: {self.severity_filter.upper()})",
+            f"DETAILED FAILED CHECKS (Severity: {self.severity_filter.upper()})",
             self.styles['SectionHeader']
         ))
+        story.append(Spacer(1, 0.2 * cm))
 
-        any_failures_found = False
+        any_failures = False
+        # Group by standard
+        by_std = {}
+        for std_name, cat_name, check in self._iter_failed_checks():
+            by_std.setdefault(std_name, []).append((cat_name, check))
 
-        for std_name, std_data in self.data.get('standards', {}).items():
-            failed_in_std = []
-            for cat in std_data.get('categories', []):
-                for check in cat.get('checks', []):
-                    if check.get('status') != 'fail':
-                        continue
-                    if not self._matches_severity(check):
-                        continue
-                    failed_in_std.append((cat.get('name', ''), check))
-
-            if not failed_in_std:
-                continue
-
-            any_failures_found = True
-
-            story.append(Spacer(1, 0.4 * cm))
-            story.append(Paragraph(
-                f"<b>{std_name} Standard</b> ({len(failed_in_std)} failures)",
-                self.styles['SectionHeader']
+        for std_name, items in by_std.items():
+            any_failures = True
+            story.append(Spacer(1, 0.3 * cm))
+            story.append(self._p_markup(
+                f"<b>{self._safe(std_name)} Standard</b> "
+                f"({len(items)} filtered failures)",
+                'SectionHeader'
             ))
 
-            for cat_name, check in failed_in_std:
+            for cat_name, check in items:
+                block = []
                 severity = (check.get('severity') or 'low').upper()
-                severity_color = {
-                    'CRITICAL': '#7f1d1d',
-                    'HIGH': '#dc2626',
-                    'MEDIUM': '#f59e0b',
-                    'LOW': '#64748b'
-                }.get(severity, '#64748b')
+                sev_hex = self._severity_color_hex(severity)
 
                 title = (
-                    f'<font color="{severity_color}">[{severity}]</font> '
-                    f'{check.get("id", "")}: {check.get("name", "")}'
+                    f'<font color="{sev_hex}">[{self._safe(severity)}]</font> '
+                    f'{self._safe(check.get("id", ""))}: '
+                    f'{self._safe(check.get("name", ""))}'
                 )
-                story.append(Paragraph(title, self.styles['CheckTitle']))
-
-                story.append(Paragraph(f"Category: {cat_name}", self.styles['CheckBody']))
+                block.append(self._p_markup(title, 'CheckTitle'))
+                block.append(self._p_markup(
+                    f"Category: {self._safe(cat_name)}", 'CheckBody'
+                ))
 
                 if check.get('description'):
-                    story.append(Paragraph(str(check.get('description')), self.styles['CheckBody']))
+                    block.append(self._p_markup(
+                        self._safe(check.get('description')), 'CheckBody'
+                    ))
 
                 if check.get('count') is not None:
                     metric_line = (
-                        f"Affected: <b>{check.get('count')}</b> of {check.get('total')} "
-                        f"({check.get('percentage', 0)}%) | "
-                        f"Threshold: {check.get('threshold', '')}"
+                        f"Affected: <b>{self._safe(check.get('count'))}</b> of "
+                        f"{self._safe(check.get('total'))} "
+                        f"({self._safe(check.get('percentage', 0))}%) | "
+                        f"Threshold: {self._safe(check.get('threshold', ''))}"
                     )
-                    story.append(Paragraph(metric_line, self.styles['CheckBody']))
+                    block.append(self._p_markup(metric_line, 'CheckBody'))
                 elif check.get('value') is not None:
                     metric_line = (
-                        f"Value: <b>{check.get('value')}</b> | "
-                        f"Threshold: {check.get('threshold', '')}"
+                        f"Value: <b>{self._safe(check.get('value'))}</b> | "
+                        f"Threshold: {self._safe(check.get('threshold', ''))}"
                     )
-                    story.append(Paragraph(metric_line, self.styles['CheckBody']))
+                    block.append(self._p_markup(metric_line, 'CheckBody'))
 
                 if check.get('recommendation'):
-                    story.append(Spacer(1, 0.12 * cm))
-                    story.append(self._recommendation_box(check.get('recommendation')))
+                    block.append(Spacer(1, 0.1 * cm))
+                    block.append(self._recommendation_box(check.get('recommendation')))
 
-                if check.get('failed_items'):
-                    story.append(Spacer(1, 0.1 * cm))
-                    story.append(Paragraph("<b>Affected Activities:</b>", self.styles['CheckBody']))
-                    for item in check.get('failed_items', []):
-                        code = item.get('code', '')
-                        name = item.get('name', '')
-                        wbs = item.get('wbs', '')
-                        line = f"• {code}"
-                        if name:
-                            line += f" - {name}"
-                        if wbs:
-                            line += f" ({wbs})"
-                        story.append(Paragraph(line, self.styles['CheckBody']))
+                # Failed items with cap
+                failed_items = check.get('failed_items') or []
+                # Temporarily use helper into block via nested story pieces
+                if failed_items:
+                    block.append(Spacer(1, 0.08 * cm))
+                    block.append(self._p_markup("<b>Affected Activities:</b>", 'CheckBody'))
+                    shown = failed_items[: self.max_items]
+                    for item in shown:
+                        block.append(self._p_markup(self._activity_line(item), 'CheckBody'))
+                    leftover = len(failed_items) - len(shown)
+                    if leftover > 0:
+                        block.append(self._p_markup(
+                            f"<i>… and {leftover} more (see Excel export)</i>",
+                            'CheckBody'
+                        ))
+                else:
+                    block.append(self._p_markup(
+                        "<i>No activity list available for this metric.</i>",
+                        'CheckBody'
+                    ))
 
-                story.append(Spacer(1, 0.35 * cm))
+                block.append(Spacer(1, 0.3 * cm))
+                story.append(KeepTogether(block))
 
-        if not any_failures_found:
-            story.append(Paragraph(
-                f"<i>No failures matched severity filter: {self.severity_filter.upper()}</i>",
-                self.styles['CheckBody']
+        if not any_failures:
+            story.append(self._p_markup(
+                f"<i>No failures matched severity filter: "
+                f"{self._safe(self.severity_filter.upper())}</i>",
+                'CheckBody'
             ))
 
-        story.append(Spacer(1, 1 * cm))
+        story.append(Spacer(1, 0.8 * cm))
         story.append(Paragraph(
-            "<font size='8' color='#64748b'><i>Generated by P6 Schedule Analyzer | Confidential</i></font>",
+            f"<font size='8' color='#64748b'><i>Generated by {self._safe(APP_TITLE)} | "
+            f"{self._safe(COMPANY_NAME)} | Confidential</i></font>",
             self.styles['CheckBody']
         ))
 
-        doc.build(story)
+        doc.build(
+            story,
+            onFirstPage=self._add_page_decor,
+            onLaterPages=self._add_page_decor,
+        )
         buffer.seek(0)
         return buffer
+
+    def _render_action_block(self, idx, action):
+        """Return list of flowables for one top action."""
+        block = []
+        severity = (action.get('severity') or 'low').upper()
+        sev_hex = self._severity_color_hex(severity)
+
+        title = (
+            f"<b>{idx}. "
+            f"<font color='{sev_hex}'>[{self._safe(severity)}]</font> "
+            f"{self._safe(action.get('id', ''))}: "
+            f"{self._safe(action.get('name', ''))}</b>"
+        )
+        block.append(self._p_markup(title, 'CheckTitle'))
+
+        meta_parts = []
+        if action.get('standard'):
+            meta_parts.append(f"Standard: {self._safe(action.get('standard'))}")
+        if action.get('category'):
+            meta_parts.append(f"Category: {self._safe(action.get('category'))}")
+        if action.get('count') is not None:
+            meta_parts.append(
+                f"Affected: {self._safe(action.get('count', 0))} "
+                f"({self._safe(action.get('percentage', 0))}%)"
+            )
+        elif action.get('value') is not None:
+            meta_parts.append(f"Value: {self._safe(action.get('value'))}")
+        if action.get('threshold'):
+            meta_parts.append(f"Threshold: {self._safe(action.get('threshold'))}")
+
+        if meta_parts:
+            block.append(self._p_markup(" | ".join(meta_parts), 'CheckBody'))
+
+        if action.get('description'):
+            block.append(self._p_markup(
+                self._safe(action.get('description')), 'CheckBody'
+            ))
+
+        if action.get('recommendation'):
+            block.append(Spacer(1, 0.08 * cm))
+            block.append(self._recommendation_box(action.get('recommendation')))
+
+        failed_items = action.get('failed_items') or []
+        if failed_items:
+            block.append(Spacer(1, 0.1 * cm))
+            block.append(self._p_markup("<b>Affected Activities:</b>", 'CheckBody'))
+            shown = failed_items[: self.max_items]
+            for item in shown:
+                block.append(self._p_markup(self._activity_line(item), 'CheckBody'))
+            leftover = len(failed_items) - len(shown)
+            if leftover > 0:
+                block.append(self._p_markup(
+                    f"<i>… and {leftover} more (see Excel export)</i>",
+                    'CheckBody'
+                ))
+        else:
+            block.append(self._p_markup(
+                "<i>No activity list available for this metric.</i>",
+                'CheckBody'
+            ))
+
+        block.append(Spacer(1, 0.3 * cm))
+        return block

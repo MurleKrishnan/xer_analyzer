@@ -1,90 +1,172 @@
 /*
-    DASHBOARD JAVASCRIPT
-    ====================
-    This file makes the web page interactive.
-    
-    Handles:
-    - File uploads (drag & drop and button)
-    - Fetching data from the Python server
-    - Drawing charts
-    - Filling tables
-    - Tab switching
+    DASHBOARD JAVASCRIPT (Patched)
+    ==============================
+    - XSS-safe rendering
+    - Robust fetch / upload errors
+    - DataTables lifecycle + large-table guard
+    - Preserve dashboard on failed re-upload
 */
 
-// ─── STORE CHART REFERENCES (so we can update them) ───
+// ─── CHART / TABLE REFERENCES ───
 let statusChart = null;
 let floatChart = null;
 let wbsChart = null;
 let activitiesDataTable = null;
 let criticalDataTable = null;
 
+const MAX_UPLOAD_MB = 100;
+const MAX_TABLE_ROWS = 5000;
+
 // ═══════════════════════════════════════════
-// STARTUP - runs when page loads
+// UTILITIES
 // ═══════════════════════════════════════════
 
-document.addEventListener('DOMContentLoaded', function() {
+function esc(s) {
+    if (s == null) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function statusClass(status) {
+    return esc(status)
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-_]/g, '');
+}
+
+async function safeFetchJSON(url, options = {}) {
+    const res = await fetch(url, options);
+    let data = {};
+    try {
+        data = await res.json();
+    } catch (e) {
+        if (!res.ok) {
+            throw new Error(`Request failed (${res.status})`);
+        }
+        throw new Error('Invalid JSON response from server');
+    }
+    if (!res.ok || data.error) {
+        throw new Error(data.error || `Request failed (${res.status})`);
+    }
+    return data;
+}
+
+async function downloadFile(url, defaultName) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            let msg = `Download failed (${res.status})`;
+            try {
+                const j = await res.json();
+                if (j.error) msg = j.error;
+            } catch (e) { /* ignore */ }
+            throw new Error(msg);
+        }
+        const blob = await res.blob();
+        const cd = res.headers.get('content-disposition') || '';
+        const m = cd.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+        const name = m ? decodeURIComponent(m[1].replace(/"/g, '')) : defaultName;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+    } catch (err) {
+        alert('❌ ' + err.message);
+    }
+}
+
+function destroyDataTable(ref, selector) {
+    try {
+        if (ref) {
+            ref.destroy();
+        } else if (window.jQuery && $.fn.DataTable && $.fn.DataTable.isDataTable(selector)) {
+            $(selector).DataTable().destroy();
+        }
+    } catch (e) {
+        console.warn('DataTable destroy:', e);
+    }
+    const tbody = document.querySelector(selector + ' tbody');
+    if (tbody) tbody.innerHTML = '';
+    return null;
+}
+
+// ═══════════════════════════════════════════
+// STARTUP
+// ═══════════════════════════════════════════
+
+document.addEventListener('DOMContentLoaded', function () {
     console.log('🚀 Dashboard initialized');
-    
     setupEventListeners();
     checkForExistingData();
 });
 
 // ═══════════════════════════════════════════
-// EVENT LISTENERS - respond to user actions
+// EVENT LISTENERS
 // ═══════════════════════════════════════════
 
 function setupEventListeners() {
-    // Upload button
-    document.getElementById('uploadBtn').addEventListener('click', function() {
-        document.getElementById('fileInput').click();
-    });
-    
-    // File input change
-    document.getElementById('fileInput').addEventListener('change', function(e) {
-        if (e.target.files.length > 0) {
-            uploadFile(e.target.files[0]);
-        }
-    });
-    
-    // Load sample button
-    document.getElementById('loadSampleBtn').addEventListener('click', loadSample);
-    
-    // Export button
-    document.getElementById('exportBtn').addEventListener('click', function() {
-        window.location.href = '/api/export-excel';
-    });
-    
-    // Drag & drop zone
-    const dropZone = document.getElementById('dropZone');
-    if (dropZone) {
-        dropZone.addEventListener('click', function() {
-            document.getElementById('fileInput').click();
+    const uploadBtn = document.getElementById('uploadBtn');
+    const fileInput = document.getElementById('fileInput');
+    const loadSampleBtn = document.getElementById('loadSampleBtn');
+    const exportBtn = document.getElementById('exportBtn');
+
+    if (uploadBtn && fileInput) {
+        uploadBtn.addEventListener('click', function () {
+            fileInput.click();
         });
-        
-        dropZone.addEventListener('dragover', function(e) {
+        fileInput.addEventListener('change', function (e) {
+            if (e.target.files && e.target.files.length > 0) {
+                uploadFile(e.target.files[0]);
+                fileInput.value = '';
+            }
+        });
+    }
+
+    if (loadSampleBtn) {
+        loadSampleBtn.addEventListener('click', loadSample);
+    }
+
+    if (exportBtn) {
+        exportBtn.addEventListener('click', function () {
+            downloadFile(
+                '/api/export-excel',
+                `schedule_report_${Date.now()}.xlsx`
+            );
+        });
+    }
+
+    const dropZone = document.getElementById('dropZone');
+    if (dropZone && fileInput) {
+        dropZone.addEventListener('click', function () {
+            fileInput.click();
+        });
+        dropZone.addEventListener('dragover', function (e) {
             e.preventDefault();
             dropZone.classList.add('drag-over');
         });
-        
-        dropZone.addEventListener('dragleave', function() {
+        dropZone.addEventListener('dragleave', function () {
             dropZone.classList.remove('drag-over');
         });
-        
-        dropZone.addEventListener('drop', function(e) {
+        dropZone.addEventListener('drop', function (e) {
             e.preventDefault();
             dropZone.classList.remove('drag-over');
-            
-            if (e.dataTransfer.files.length > 0) {
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 uploadFile(e.dataTransfer.files[0]);
             }
         });
     }
-    
-    // Tab switching
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
             const tabName = this.getAttribute('data-tab');
-            switchTab(tabName);
+            if (tabName) switchTab(tabName);
         });
     });
 }
@@ -93,149 +175,173 @@ function setupEventListeners() {
 // FILE OPERATIONS
 // ═══════════════════════════════════════════
 
-function uploadFile(file) {
-    console.log('📤 Uploading:', file.name);
-    
-    // Validate file
+async function uploadFile(file) {
+    if (!file) return;
+
     if (!file.name.toLowerCase().endsWith('.xer')) {
         alert('❌ Please upload a .xer file');
         return;
     }
-    
+
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        alert('❌ File exceeds ' + MAX_UPLOAD_MB + ' MB limit');
+        return;
+    }
+
+    console.log('📤 Uploading:', file.name);
     showLoading('Uploading and analyzing...');
-    
+
     const formData = new FormData();
     formData.append('file', file);
-    
-    fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.error) {
-            alert('❌ Error: ' + data.error);
-            hideLoading();
-            return;
-        }
-        
+
+    try {
+        const data = await safeFetchJSON('/api/upload', {
+            method: 'POST',
+            body: formData
+        });
         console.log('✅ Analysis complete');
         showDashboard(data);
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('❌ Failed to upload file: ' + error.message);
-        hideLoading();
-    });
+    } catch (error) {
+        console.error('Upload error:', error);
+        alert('❌ ' + (error.message || 'Failed to upload file'));
+        hideLoading(true);
+    }
 }
 
-function loadSample() {
+async function loadSample() {
     console.log('📄 Loading sample file...');
     showLoading('Loading sample XER file...');
-    
-    fetch('/api/load-sample')
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                alert('❌ ' + data.error);
-                hideLoading();
-                return;
-            }
-            showDashboard(data);
-        })
-        .catch(error => {
-            alert('❌ Failed to load sample');
-            hideLoading();
-        });
+    try {
+        const data = await safeFetchJSON('/api/load-sample');
+        showDashboard(data);
+    } catch (error) {
+        console.error(error);
+        alert('❌ ' + (error.message || 'Failed to load sample'));
+        hideLoading(true);
+    }
 }
 
-function checkForExistingData() {
-    fetch('/api/dashboard')
-        .then(response => response.json())
-        .then(data => {
-            if (data.has_data) {
-                showDashboard(data);
-            }
-        });
+async function checkForExistingData() {
+    try {
+        const res = await fetch('/api/dashboard');
+        const data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.has_data) {
+            showDashboard(data);
+        }
+    } catch (e) {
+        console.warn('No existing dashboard data', e);
+    }
 }
 
 // ═══════════════════════════════════════════
-// UI STATE MANAGEMENT
+// UI STATE
 // ═══════════════════════════════════════════
 
 function showLoading(text) {
-    document.getElementById('welcomeScreen').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'none';
-    document.getElementById('loadingScreen').style.display = 'flex';
-    document.getElementById('loadingText').textContent = text || 'Loading...';
+    const welcome = document.getElementById('welcomeScreen');
+    const dash = document.getElementById('dashboard');
+    const loading = document.getElementById('loadingScreen');
+    const loadingText = document.getElementById('loadingText');
+
+    if (welcome) welcome.style.display = 'none';
+    if (dash) dash.style.display = 'none';
+    if (loading) loading.style.display = 'flex';
+    if (loadingText) loadingText.textContent = text || 'Loading...';
 }
 
-function hideLoading() {
-    document.getElementById('loadingScreen').style.display = 'none';
-    document.getElementById('welcomeScreen').style.display = 'flex';
+function hideLoading(keepDashboard) {
+    const welcome = document.getElementById('welcomeScreen');
+    const dash = document.getElementById('dashboard');
+    const loading = document.getElementById('loadingScreen');
+
+    if (loading) loading.style.display = 'none';
+
+    const loaded = dash && dash.dataset.loaded === '1';
+    if (keepDashboard && loaded) {
+        if (dash) dash.style.display = 'block';
+        if (welcome) welcome.style.display = 'none';
+    } else {
+        if (welcome) welcome.style.display = 'flex';
+        if (dash) dash.style.display = 'none';
+    }
 }
 
 function showDashboard(response) {
-    document.getElementById('welcomeScreen').style.display = 'none';
-    document.getElementById('loadingScreen').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'block';
-    document.getElementById('exportBtn').style.display = 'inline-flex';
-    
-    // Update file info
-    document.getElementById('fileName').textContent = response.file_name || '--';
-    document.getElementById('analyzedAt').textContent = response.analyzed_at || '--';
-    
-    const data = response.data;
-    
-    // Update project info
-    if (data.project_info) {
-        document.getElementById('projectName').textContent = 
-            data.project_info.name || '--';
+    const welcome = document.getElementById('welcomeScreen');
+    const loading = document.getElementById('loadingScreen');
+    const dash = document.getElementById('dashboard');
+    const exportBtn = document.getElementById('exportBtn');
+
+    if (welcome) welcome.style.display = 'none';
+    if (loading) loading.style.display = 'none';
+    if (dash) {
+        dash.style.display = 'block';
+        dash.dataset.loaded = '1';
     }
-    
-    // Render each section
-    renderSummaryCards(data.summary_cards);
-    renderStatusChart(data.status_distribution);
-    renderFloatChart(data.float_distribution);
-    renderWbsChart(data.wbs_breakdown);
-    renderDcmaCards(data.dcma_summary);
-    renderIssues(data.top_issues);
-    renderActivitiesTable(data.activities_table);
-    renderCriticalTable(data.critical_activities);
+    if (exportBtn) exportBtn.style.display = 'inline-flex';
+
+    const fileName = document.getElementById('fileName');
+    const analyzedAt = document.getElementById('analyzedAt');
+    const projectName = document.getElementById('projectName');
+
+    if (fileName) fileName.textContent = response.file_name || '--';
+    if (analyzedAt) analyzedAt.textContent = response.analyzed_at || '--';
+
+    const data = response.data || {};
+
+    if (projectName && data.project_info) {
+        projectName.textContent = data.project_info.name || '--';
+    }
+
+    try { renderSummaryCards(data.summary_cards || []); } catch (e) { console.error(e); }
+    try { renderStatusChart(data.status_distribution); } catch (e) { console.error(e); }
+    try { renderFloatChart(data.float_distribution); } catch (e) { console.error(e); }
+    try { renderWbsChart(data.wbs_breakdown); } catch (e) { console.error(e); }
+    try { renderDcmaCards(data.dcma_summary || []); } catch (e) { console.error(e); }
+    try { renderIssues(data.top_issues || []); } catch (e) { console.error(e); }
+    try { renderActivitiesTable(data.activities_table || []); } catch (e) { console.error(e); }
+    try { renderCriticalTable(data.critical_activities || []); } catch (e) { console.error(e); }
 }
 
 // ═══════════════════════════════════════════
-// RENDER FUNCTIONS - draw stuff on screen
+// RENDER
 // ═══════════════════════════════════════════
 
 function renderSummaryCards(cards) {
     const container = document.getElementById('summaryCards');
+    if (!container) return;
     container.innerHTML = '';
-    
-    cards.forEach(card => {
+
+    (cards || []).forEach(function (card) {
         const div = document.createElement('div');
-        div.className = `summary-card ${card.color}`;
-        div.innerHTML = `
-            <div class="card-icon">${card.icon}</div>
-            <div class="card-value">${card.value}</div>
-            <div class="card-label">${card.label}</div>
-        `;
+        const color = esc(card.color || 'blue');
+        div.className = 'summary-card ' + color;
+        div.innerHTML =
+            '<div class="card-icon">' + esc(card.icon) + '</div>' +
+            '<div class="card-value">' + esc(card.value) + '</div>' +
+            '<div class="card-label">' + esc(card.label) + '</div>';
         container.appendChild(div);
     });
 }
 
 function renderStatusChart(data) {
-    const ctx = document.getElementById('statusChart').getContext('2d');
-    
-    if (statusChart) statusChart.destroy();
-    
+    if (!data || !data.labels || !data.values) return;
+    const canvas = document.getElementById('statusChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    if (statusChart) {
+        statusChart.destroy();
+        statusChart = null;
+    }
+
     statusChart = new Chart(ctx, {
         type: 'doughnut',
         data: {
             labels: data.labels,
             datasets: [{
                 data: data.values,
-                backgroundColor: data.colors,
+                backgroundColor: data.colors || ['#94a3b8', '#f59e0b', '#10b981'],
                 borderWidth: 2,
                 borderColor: '#fff'
             }]
@@ -251,10 +357,16 @@ function renderStatusChart(data) {
 }
 
 function renderFloatChart(data) {
-    const ctx = document.getElementById('floatChart').getContext('2d');
-    
-    if (floatChart) floatChart.destroy();
-    
+    if (!data || !data.labels || !data.values) return;
+    const canvas = document.getElementById('floatChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    if (floatChart) {
+        floatChart.destroy();
+        floatChart = null;
+    }
+
     floatChart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -262,7 +374,7 @@ function renderFloatChart(data) {
             datasets: [{
                 label: 'Activities',
                 data: data.values,
-                backgroundColor: data.colors,
+                backgroundColor: data.colors || '#3b82f6',
                 borderRadius: 4
             }]
         },
@@ -280,10 +392,16 @@ function renderFloatChart(data) {
 }
 
 function renderWbsChart(data) {
-    const ctx = document.getElementById('wbsChart').getContext('2d');
-    
-    if (wbsChart) wbsChart.destroy();
-    
+    if (!data || !data.labels || !data.values) return;
+    const canvas = document.getElementById('wbsChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    if (wbsChart) {
+        wbsChart.destroy();
+        wbsChart = null;
+    }
+
     wbsChart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -308,133 +426,219 @@ function renderWbsChart(data) {
 
 function renderDcmaCards(dcmaData) {
     const container = document.getElementById('dcmaGrid');
+    if (!container) return;
     container.innerHTML = '';
-    
-    dcmaData.forEach(check => {
+
+    (dcmaData || []).forEach(function (check) {
+        const passed = !!check.pass;
         const div = document.createElement('div');
-        div.className = `dcma-card ${check.pass ? 'pass' : 'fail'}`;
-        div.innerHTML = `
-            <div class="dcma-card-header">
-                <div class="dcma-card-name">${check.name}</div>
-                <span class="dcma-badge ${check.pass ? 'pass' : 'fail'}">
-                    ${check.pass ? '✓ PASS' : '✗ FAIL'}
-                </span>
-            </div>
-            <div class="dcma-value">${check.value}</div>
-            <div class="dcma-details">
-                ${check.count} of ${check.total} | Threshold: ${check.threshold}
-            </div>
-        `;
+        div.className = 'dcma-card ' + (passed ? 'pass' : 'fail');
+
+        let details;
+        if (check.count != null && check.total != null) {
+            details = esc(check.count) + ' of ' + esc(check.total) +
+                ' | Threshold: ' + esc(check.threshold);
+        } else {
+            details = 'Threshold: ' + esc(check.threshold || '');
+        }
+
+        div.innerHTML =
+            '<div class="dcma-card-header">' +
+            '<div class="dcma-card-name">' + esc(check.name) + '</div>' +
+            '<span class="dcma-badge ' + (passed ? 'pass' : 'fail') + '">' +
+            (passed ? '✓ PASS' : '✗ FAIL') +
+            '</span></div>' +
+            '<div class="dcma-value">' + esc(check.value) + '</div>' +
+            '<div class="dcma-details">' + details + '</div>';
         container.appendChild(div);
     });
 }
 
 function renderIssues(issues) {
+    const section = document.getElementById('issuesSection');
+    const container = document.getElementById('issuesList');
+    if (!section || !container) return;
+
     if (!issues || issues.length === 0) {
-        document.getElementById('issuesSection').style.display = 'none';
+        section.style.display = 'none';
         return;
     }
-    
-    document.getElementById('issuesSection').style.display = 'block';
-    const container = document.getElementById('issuesList');
+
+    section.style.display = 'block';
     container.innerHTML = '';
-    
-    issues.forEach(issue => {
+
+    issues.forEach(function (issue) {
+        const sev = esc((issue.severity || 'medium').toLowerCase());
         const div = document.createElement('div');
-        div.className = `issue-item ${issue.severity}`;
-        div.innerHTML = `
-            <div>
-                <strong>${issue.check}</strong>
-                <div style="font-size: 0.85rem; color: #64748b;">
-                    ${issue.count} activities affected (${issue.percentage}%)
-                </div>
-            </div>
-            <span class="dcma-badge fail">${issue.severity.toUpperCase()}</span>
-        `;
+        div.className = 'issue-item ' + sev;
+        div.innerHTML =
+            '<div><strong>' + esc(issue.check) + '</strong>' +
+            '<div style="font-size:0.85rem;color:#64748b;">' +
+            esc(issue.count) + ' activities affected (' + esc(issue.percentage) + '%)' +
+            '</div></div>' +
+            '<span class="dcma-badge fail">' + esc((issue.severity || '').toUpperCase()) + '</span>';
         container.appendChild(div);
     });
 }
 
 function renderActivitiesTable(activities) {
-    if (activitiesDataTable) {
-        activitiesDataTable.destroy();
+    activitiesDataTable = destroyDataTable(activitiesDataTable, '#activitiesTable');
+
+    const list = Array.isArray(activities) ? activities : [];
+    let rows = list;
+    let note = '';
+    if (list.length > MAX_TABLE_ROWS) {
+        rows = list.slice(0, MAX_TABLE_ROWS);
+        note = 'Showing first ' + MAX_TABLE_ROWS + ' of ' + list.length +
+            ' activities. Export Excel for the full list.';
     }
-    
+
     const tbody = document.querySelector('#activitiesTable tbody');
-    tbody.innerHTML = '';
-    
-    activities.forEach(act => {
-        const statusClass = act.status.toLowerCase().replace(' ', '-');
-        const row = document.createElement('tr');
-        if (act.critical) row.className = 'critical-row';
-        
-        row.innerHTML = `
-            <td><strong>${act.code}</strong></td>
-            <td>${act.name}</td>
-            <td>${act.wbs}</td>
-            <td>${act.type}</td>
-            <td><span class="status-badge ${statusClass}">${act.status}</span></td>
-            <td>${act.duration}d</td>
-            <td>${act.critical ? '🔴 ' : ''}${act.float}d</td>
-            <td>${act.start}</td>
-            <td>${act.finish}</td>
-        `;
-        tbody.appendChild(row);
-    });
-    
-    activitiesDataTable = $('#activitiesTable').DataTable({
-        pageLength: 25,
-        order: [[6, 'asc']],  // Sort by float
-        destroy: true
-    });
+    if (!tbody) return;
+
+    // Prefer DataTables data API when jQuery available
+    if (window.jQuery && $.fn.DataTable) {
+        activitiesDataTable = $('#activitiesTable').DataTable({
+            data: rows,
+            pageLength: 25,
+            order: [[6, 'asc']],
+            deferRender: true,
+            columns: [
+                {
+                    data: 'code',
+                    render: function (d) {
+                        return '<strong>' + esc(d) + '</strong>';
+                    }
+                },
+                { data: 'name', render: function (d) { return esc(d); } },
+                { data: 'wbs', render: function (d) { return esc(d); } },
+                { data: 'type', render: function (d) { return esc(d); } },
+                {
+                    data: 'status',
+                    render: function (d) {
+                        const c = statusClass(d);
+                        return '<span class="status-badge ' + c + '">' + esc(d) + '</span>';
+                    }
+                },
+                {
+                    data: 'duration',
+                    render: function (d) { return esc(d) + 'd'; }
+                },
+                {
+                    data: 'float',
+                    render: function (d, t, row) {
+                        return (row.critical ? '🔴 ' : '') + esc(d) + 'd';
+                    }
+                },
+                { data: 'start', render: function (d) { return esc(d); } },
+                { data: 'finish', render: function (d) { return esc(d); } }
+            ],
+            createdRow: function (row, data) {
+                if (data.critical) row.classList.add('critical-row');
+            }
+        });
+    } else {
+        tbody.innerHTML = '';
+        rows.forEach(function (act) {
+            const tr = document.createElement('tr');
+            if (act.critical) tr.className = 'critical-row';
+            const sc = statusClass(act.status);
+            tr.innerHTML =
+                '<td><strong>' + esc(act.code) + '</strong></td>' +
+                '<td>' + esc(act.name) + '</td>' +
+                '<td>' + esc(act.wbs) + '</td>' +
+                '<td>' + esc(act.type) + '</td>' +
+                '<td><span class="status-badge ' + sc + '">' + esc(act.status) + '</span></td>' +
+                '<td>' + esc(act.duration) + 'd</td>' +
+                '<td>' + (act.critical ? '🔴 ' : '') + esc(act.float) + 'd</td>' +
+                '<td>' + esc(act.start) + '</td>' +
+                '<td>' + esc(act.finish) + '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    if (note) {
+        console.info(note);
+    }
 }
 
 function renderCriticalTable(criticals) {
-    if (criticalDataTable) {
-        criticalDataTable.destroy();
+    criticalDataTable = destroyDataTable(criticalDataTable, '#criticalTable');
+
+    const rows = Array.isArray(criticals) ? criticals : [];
+
+    if (window.jQuery && $.fn.DataTable) {
+        criticalDataTable = $('#criticalTable').DataTable({
+            data: rows,
+            pageLength: 25,
+            deferRender: true,
+            columns: [
+                {
+                    data: 'code',
+                    render: function (d) {
+                        return '<strong>' + esc(d) + '</strong>';
+                    }
+                },
+                { data: 'name', render: function (d) { return esc(d); } },
+                { data: 'wbs', render: function (d) { return esc(d); } },
+                {
+                    data: 'duration',
+                    render: function (d) { return esc(d) + 'd'; }
+                },
+                {
+                    data: 'float',
+                    render: function (d) { return '🔴 ' + esc(d) + 'd'; }
+                },
+                {
+                    data: 'status',
+                    render: function (d) {
+                        const c = statusClass(d);
+                        return '<span class="status-badge ' + c + '">' + esc(d) + '</span>';
+                    }
+                },
+                { data: 'start', render: function (d) { return esc(d); } },
+                { data: 'finish', render: function (d) { return esc(d); } }
+            ],
+            createdRow: function (row) {
+                row.classList.add('critical-row');
+            }
+        });
+    } else {
+        const tbody = document.querySelector('#criticalTable tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        rows.forEach(function (act) {
+            const tr = document.createElement('tr');
+            tr.className = 'critical-row';
+            const sc = statusClass(act.status);
+            tr.innerHTML =
+                '<td><strong>' + esc(act.code) + '</strong></td>' +
+                '<td>' + esc(act.name) + '</td>' +
+                '<td>' + esc(act.wbs) + '</td>' +
+                '<td>' + esc(act.duration) + 'd</td>' +
+                '<td>🔴 ' + esc(act.float) + 'd</td>' +
+                '<td><span class="status-badge ' + sc + '">' + esc(act.status) + '</span></td>' +
+                '<td>' + esc(act.start) + '</td>' +
+                '<td>' + esc(act.finish) + '</td>';
+            tbody.appendChild(tr);
+        });
     }
-    
-    const tbody = document.querySelector('#criticalTable tbody');
-    tbody.innerHTML = '';
-    
-    criticals.forEach(act => {
-        const statusClass = act.status.toLowerCase().replace(' ', '-');
-        const row = document.createElement('tr');
-        row.className = 'critical-row';
-        
-        row.innerHTML = `
-            <td><strong>${act.code}</strong></td>
-            <td>${act.name}</td>
-            <td>${act.wbs}</td>
-            <td>${act.duration}d</td>
-            <td>🔴 ${act.float}d</td>
-            <td><span class="status-badge ${statusClass}">${act.status}</span></td>
-            <td>${act.start}</td>
-            <td>${act.finish}</td>
-        `;
-        tbody.appendChild(row);
-    });
-    
-    criticalDataTable = $('#criticalTable').DataTable({
-        pageLength: 25,
-        destroy: true
-    });
 }
 
 // ═══════════════════════════════════════════
-// TAB SWITCHING
+// TABS
 // ═══════════════════════════════════════════
 
 function switchTab(tabName) {
-    // Update buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => {
+    document.querySelectorAll('.tab-btn').forEach(function (btn) {
         btn.classList.remove('active');
     });
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-    
-    // Update content
-    document.querySelectorAll('.tab-content').forEach(content => {
+    const activeBtn = document.querySelector('[data-tab="' + tabName + '"]');
+    if (activeBtn) activeBtn.classList.add('active');
+
+    document.querySelectorAll('.tab-content').forEach(function (content) {
         content.classList.remove('active');
     });
-    document.getElementById(`tab-${tabName}`).classList.add('active');
+    const panel = document.getElementById('tab-' + tabName);
+    if (panel) panel.classList.add('active');
 }
