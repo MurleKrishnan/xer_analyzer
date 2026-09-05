@@ -1,10 +1,6 @@
 /*
-    ADVANCED HEALTH DASHBOARD (Patched)
-    ===================================
-    - XSS-safe rendering
-    - Severity-aware top actions
-    - Blob-based PDF/Excel downloads
-    - Capped activity lists + debounced search
+    ADVANCED HEALTH DASHBOARD (Patched + AI Narrative Support)
+    ==========================================================
 */
 
 let healthData = null;
@@ -125,7 +121,7 @@ function itemRowHtml(item) {
         : '';
     return (
         '<div style="font-size:0.82rem;padding:0.15rem 0;border-bottom:1px solid #f1f5f9;">' +
-        '<strong>' + code + '</strong>' + name + wbs +
+        '<strong data-activity-code="' + code + '">' + code + '</strong>' + name + wbs +
         '</div>'
     );
 }
@@ -147,9 +143,7 @@ function renderItemsBlock(items, summaryLabel) {
         '<div style="margin-top:0.4rem;background:#fff;border:1px solid #e2e8f0;' +
         'border-radius:6px;padding:0.6rem;max-height:280px;overflow:auto;">';
 
-    shown.forEach(function (item) {
-        html += itemRowHtml(item);
-    });
+    shown.forEach(function (item) { html += itemRowHtml(item); });
     if (more > 0) {
         html +=
             '<div style="font-size:0.82rem;color:#64748b;padding-top:0.35rem;">' +
@@ -169,7 +163,6 @@ function statusIcon(status) {
 // ═══════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', function () {
-    // Optional URL: /health?standard=DCMA
     try {
         const params = new URLSearchParams(window.location.search || '');
         const std = params.get('standard');
@@ -185,27 +178,20 @@ function wireFilterListeners() {
     if (search) {
         search.addEventListener('input', function () {
             clearTimeout(searchTimer);
-            searchTimer = setTimeout(function () {
-                applyFilter();
-            }, 250);
+            searchTimer = setTimeout(function () { applyFilter(); }, 250);
         });
     }
 
     ['filterStatus', 'filterSeverity'].forEach(function (id) {
         const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('change', applyFilter);
-        }
+        if (el) el.addEventListener('change', applyFilter);
     });
 
     const sevExport = document.getElementById('excelSeverityFilter');
     if (sevExport) {
-        sevExport.addEventListener('change', function () {
-            renderTopActions();
-        });
+        sevExport.addEventListener('change', function () { renderTopActions(); });
     }
 
-    // Standard buttons (if present without inline onclick)
     document.querySelectorAll('.std-select-btn').forEach(function (btn) {
         btn.addEventListener('click', function () {
             const std = btn.getAttribute('data-std');
@@ -220,11 +206,9 @@ function wireFilterListeners() {
 
 function selectStandard(standard) {
     currentStandard = standard || 'all';
-
     document.querySelectorAll('.std-select-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.getAttribute('data-std') === currentStandard);
     });
-
     loadHealthData(currentStandard);
 }
 
@@ -240,9 +224,7 @@ async function loadHealthData(standard) {
     const std = standard || 'all';
 
     try {
-        const response = await safeFetchJSON(
-            '/api/health-data?standard=' + encodeURIComponent(std)
-        );
+        const response = await safeFetchJSON('/api/health-data?standard=' + encodeURIComponent(std));
         healthData = response.data || {};
         currentStandard = std;
         renderDashboard();
@@ -267,10 +249,7 @@ function renderDashboard() {
     if (loading) loading.style.display = 'none';
     if (content) content.style.display = 'block';
 
-    if (!healthData) {
-        showHealthError('No health data returned');
-        return;
-    }
+    if (!healthData) { showHealthError('No health data returned'); return; }
 
     setText('overallScore', healthData.overall_score);
     setText('totalChecks', healthData.total_checks);
@@ -279,12 +258,8 @@ function renderDashboard() {
     setText('criticalFailures', healthData.critical_failures);
 
     const stdName = currentStandard === 'all' ? 'All Standards' : currentStandard;
-    setText(
-        'reportTitle',
-        currentStandard === 'all' ? 'Comprehensive Assessment' : stdName + ' Assessment'
-    );
-    setText(
-        'reportSubtitle',
+    setText('reportTitle', currentStandard === 'all' ? 'Comprehensive Assessment' : stdName + ' Assessment');
+    setText('reportSubtitle',
         currentStandard === 'all'
             ? 'Analysis based on all applicable standards'
             : 'Detailed analysis of ' + stdName + ' compliance'
@@ -303,8 +278,7 @@ function renderStandardsScores() {
     const scores = healthData.standard_scores || {};
     const keys = Object.keys(scores);
     if (!keys.length) {
-        container.innerHTML =
-            '<p style="color:#64748b;">No standards evaluated.</p>';
+        container.innerHTML = '<p style="color:#64748b;">No standards evaluated.</p>';
         return;
     }
 
@@ -321,16 +295,12 @@ function renderStandardsScores() {
         div.innerHTML =
             '<div style="font-size:0.85rem;color:#64748b;font-weight:600;">' + esc(std) + '</div>' +
             '<div class="std-score-value">' + esc(data.score) + '</div>' +
-            '<div class="std-score-grade grade-' + esc(data.grade) + '">Grade ' +
-            esc(data.grade) + '</div>' +
+            '<div class="std-score-grade grade-' + esc(data.grade) + '">Grade ' + esc(data.grade) + '</div>' +
             '<div class="std-score-details">' +
-            esc(data.passed) + '/' + esc(data.total_checks) + ' passed<br>' +
-            failedLine +
+            esc(data.passed) + '/' + esc(data.total_checks) + ' passed<br>' + failedLine +
             '</div>';
 
-        div.addEventListener('click', function () {
-            selectStandard(std);
-        });
+        div.addEventListener('click', function () { selectStandard(std); });
         container.appendChild(div);
     });
 }
@@ -347,11 +317,7 @@ function renderTopActions() {
         .slice(0, MAX_TOP_ACTIONS_UI);
 
     if (!list.length) {
-        // Still show section if filter emptied a non-empty global list
-        if (!raw.length) {
-            section.style.display = 'none';
-            return;
-        }
+        if (!raw.length) { section.style.display = 'none'; return; }
         section.style.display = 'block';
         container.innerHTML =
             '<p style="color:#64748b;padding:0.5rem 0;">No top actions match severity filter: ' +
@@ -365,11 +331,7 @@ function renderTopActions() {
     list.forEach(function (action, idx) {
         const severity = (action.severity || 'low').toLowerCase();
         const severityColor = {
-            critical: '#7f1d1d',
-            high: '#dc2626',
-            medium: '#f59e0b',
-            low: '#64748b',
-            info: '#64748b'
+            critical: '#7f1d1d', high: '#dc2626', medium: '#f59e0b', low: '#64748b', info: '#64748b'
         }[severity] || '#64748b';
 
         const failedItems = action.failed_items || [];
@@ -377,9 +339,7 @@ function renderTopActions() {
 
         let metricText;
         if (action.count !== undefined && action.count !== null) {
-            metricText =
-                esc(action.count) + ' activities affected (' +
-                esc(action.percentage || 0) + '%)';
+            metricText = esc(action.count) + ' activities affected (' + esc(action.percentage || 0) + '%)';
         } else if (action.value !== undefined && action.value !== null) {
             metricText = 'Value: ' + esc(action.value);
         } else {
@@ -389,24 +349,20 @@ function renderTopActions() {
         const div = document.createElement('div');
         div.className = 'action-item';
         div.innerHTML =
-            '<div class="action-priority" style="background:' + severityColor + ';">' +
-            (idx + 1) + '</div>' +
+            '<div class="action-priority" style="background:' + severityColor + ';">' + (idx + 1) + '</div>' +
             '<div style="flex:1;">' +
             '<div style="font-weight:600;">' +
             esc(action.id || '') + ': ' + esc(action.name || '') + ' ' +
-            '<span class="badge badge-' + esc(severity) + '">' +
-            esc(severity.toUpperCase()) + '</span> ' +
+            '<span class="badge badge-' + esc(severity) + '">' + esc(severity.toUpperCase()) + '</span> ' +
             '<span class="badge badge-std">' + esc(action.standard || '') + '</span>' +
             '</div>' +
             '<div style="font-size:0.85rem;color:#64748b;margin-top:0.25rem;">' +
-            (action.category ? 'Category: ' + esc(action.category) + ' | ' : '') +
-            metricText +
+            (action.category ? 'Category: ' + esc(action.category) + ' | ' : '') + metricText +
             '</div>' +
             (action.recommendation
                 ? '<div class="recommendation-box">💡 ' + esc(action.recommendation) + '</div>'
                 : '') +
-            itemsHtml +
-            '</div>';
+            itemsHtml + '</div>';
 
         container.appendChild(div);
     });
@@ -418,8 +374,7 @@ function renderDetailedResults() {
     container.innerHTML = '';
 
     if (!healthData || !healthData.standards) {
-        container.innerHTML =
-            '<p style="text-align:center;padding:2rem;color:#64748b;">No detailed results.</p>';
+        container.innerHTML = '<p style="text-align:center;padding:2rem;color:#64748b;">No detailed results.</p>';
         return;
     }
 
@@ -438,15 +393,11 @@ function renderDetailedResults() {
             const checks = category.checks || [];
             const filteredChecks = checks.filter(function (check) {
                 if (filterStatus !== 'all' && check.status !== filterStatus) return false;
-                if (filterSeverity !== 'all' && !severityAllowed(check.severity, filterSeverity)) {
-                    return false;
-                }
+                if (filterSeverity !== 'all' && !severityAllowed(check.severity, filterSeverity)) return false;
                 if (filterSearch) {
                     const name = String(check.name || '').toLowerCase();
                     const id = String(check.id || '').toLowerCase();
-                    if (name.indexOf(filterSearch) < 0 && id.indexOf(filterSearch) < 0) {
-                        return false;
-                    }
+                    if (name.indexOf(filterSearch) < 0 && id.indexOf(filterSearch) < 0) return false;
                 }
                 return true;
             });
@@ -466,28 +417,20 @@ function renderDetailedResults() {
                 '<div style="font-size:0.85rem;color:#64748b;">' + esc(stdName) + '</div></div>' +
                 '<div class="category-stats">' +
                 passed + '/' + filteredChecks.length + ' passed' +
-                (failed > 0
-                    ? ' | <span style="color:#dc2626;">' + failed + ' failed</span>'
-                    : '') +
+                (failed > 0 ? ' | <span style="color:#dc2626;">' + failed + ' failed</span>' : '') +
                 '</div></div>' +
                 '<div class="checks-list"></div>';
 
             const checksList = section.querySelector('.checks-list');
-            filteredChecks.forEach(function (check) {
-                checksList.appendChild(createCheckItem(check));
-            });
-
+            filteredChecks.forEach(function (check) { checksList.appendChild(createCheckItem(check)); });
             frag.appendChild(section);
         });
     });
 
     if (!sections) {
-        container.innerHTML =
-            '<p style="text-align:center;padding:2rem;color:#64748b;">' +
-            'No checks match your filter criteria.</p>';
+        container.innerHTML = '<p style="text-align:center;padding:2rem;color:#64748b;">No checks match your filter criteria.</p>';
         return;
     }
-
     container.appendChild(frag);
 }
 
@@ -503,9 +446,7 @@ function createCheckItem(check) {
     if (check.value !== undefined && check.value !== null && check.value !== '') {
         details = '<strong>Value:</strong> ' + esc(check.value) + esc(check.unit || '');
     } else if (check.count !== undefined && check.count !== null) {
-        details =
-            '<strong>Count:</strong> ' + esc(check.count) + ' / ' +
-            esc(check.total) + ' (' + esc(check.percentage) + '%)';
+        details = '<strong>Count:</strong> ' + esc(check.count) + ' / ' + esc(check.total) + ' (' + esc(check.percentage) + '%)';
     }
 
     const itemsHtml = (check.failed_items && check.failed_items.length)
@@ -520,25 +461,17 @@ function createCheckItem(check) {
         '<span class="badge badge-' + esc(severity) + '">' + esc(severity) + '</span> ' +
         '<span class="badge badge-std">' + esc(check.standard) + '</span>' +
         '</div>' +
-        '<div style="font-size:0.85rem;color:#64748b;margin-bottom:0.5rem;">' +
-        esc(check.description) + '</div>' +
+        '<div style="font-size:0.85rem;color:#64748b;margin-bottom:0.5rem;">' + esc(check.description) + '</div>' +
         '<div style="font-size:0.85rem;">' + details +
-        (check.threshold
-            ? ' | <strong>Threshold:</strong> ' + esc(check.threshold)
-            : '') +
+        (check.threshold ? ' | <strong>Threshold:</strong> ' + esc(check.threshold) : '') +
         '</div>' +
-        (check.recommendation
-            ? '<div class="recommendation-box">💡 ' + esc(check.recommendation) + '</div>'
-            : '') +
-        itemsHtml +
-        '</div>';
+        (check.recommendation ? '<div class="recommendation-box">💡 ' + esc(check.recommendation) + '</div>' : '') +
+        itemsHtml + '</div>';
 
     return div;
 }
 
-function applyFilter() {
-    renderDetailedResults();
-}
+function applyFilter() { renderDetailedResults(); }
 
 // ═══════════════════════════════════════════
 // EXPORTS
@@ -547,34 +480,70 @@ function applyFilter() {
 function downloadPDF(ev) {
     const severity = getSelectedSeverity();
     const btn = ev && ev.currentTarget ? ev.currentTarget : null;
-    const url =
-        '/api/executive-pdf?standard=' + encodeURIComponent(currentStandard) +
-        '&severity=' + encodeURIComponent(severity);
+    const url = '/api/executive-pdf?standard=' + encodeURIComponent(currentStandard) + '&severity=' + encodeURIComponent(severity);
     downloadFile(url, 'executive_report.pdf', btn);
 }
 
 function downloadActionsPDF(ev) {
     const severity = getSelectedSeverity();
     const btn = ev && ev.currentTarget ? ev.currentTarget : null;
-    const url =
-        '/api/actions-pdf?standard=' + encodeURIComponent(currentStandard) +
-        '&severity=' + encodeURIComponent(severity);
+    const url = '/api/actions-pdf?standard=' + encodeURIComponent(currentStandard) + '&severity=' + encodeURIComponent(severity);
     downloadFile(url, 'action_list.pdf', btn);
 }
 
 function downloadActionsExcel(ev) {
     const severity = getSelectedSeverity();
     const btn = ev && ev.currentTarget ? ev.currentTarget : null;
-    const url =
-        '/api/actions-excel?standard=' + encodeURIComponent(currentStandard) +
-        '&severity=' + encodeURIComponent(severity);
+    const url = '/api/actions-excel?standard=' + encodeURIComponent(currentStandard) + '&severity=' + encodeURIComponent(severity);
     downloadFile(url, 'health_top_actions.xlsx', btn);
 }
 
-// Back-compat for onclick="downloadPDF()" without event
+// ═══════════════════════════════════════════
+// AI EXECUTIVE NARRATIVE
+// ═══════════════════════════════════════════
+
+async function fetchAINarrative(forceRefresh) {
+    const body = document.getElementById('aiNarrativeBody');
+    const methodEl = document.getElementById('aiNarrativeMethod');
+    if (!body) return;
+
+    body.innerHTML = '<p style="color:var(--color-muted);">⏳ Synthesizing executive briefing from health, EVM, and variance data...</p>';
+    if (methodEl) methodEl.textContent = '';
+
+    try {
+        const res = await fetch('/api/ai-narrative');
+        const data = await res.json().catch(function () { return {}; });
+
+        if (!res.ok || data.error) {
+            throw new Error(data.error || 'Failed to generate narrative');
+        }
+
+        const narrativeText = (data.data && data.data.narrative) || '';
+        const method = (data.data && data.data.method) || 'Engine';
+
+        if (methodEl) {
+            methodEl.innerHTML = '<span>✨ Generated via: <strong>' + esc(method) + '</strong></span>';
+        }
+
+        // Convert basic markdown to HTML (with escape safety)
+        let formattedHtml = esc(narrativeText)
+            .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n\n/g, '<br><br>')
+            .replace(/\n- /g, '<br>• ')
+            .replace(/^- /gm, '• ');
+
+        body.innerHTML = formattedHtml;
+    } catch (err) {
+        body.innerHTML = '<p style="color:var(--color-danger);">❌ ' + esc(err.message) + '</p>';
+    }
+}
+
+// Back-compat exports
 window.downloadPDF = downloadPDF;
 window.downloadActionsPDF = downloadActionsPDF;
 window.downloadActionsExcel = downloadActionsExcel;
 window.selectStandard = selectStandard;
 window.applyFilter = applyFilter;
 window.loadHealthData = loadHealthData;
+window.fetchAINarrative = fetchAINarrative;

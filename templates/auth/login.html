@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | {{ config.app_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            display: flex; align-items: center; justify-content: center;
+            min-height: 100vh; background: linear-gradient(135deg, #1e40af, #3730a3);
+            margin: 0; font-family: -apple-system, sans-serif;
+        }
+        .auth-card {
+            background: #fff; border-radius: 16px; padding: 3rem 2.5rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 100%; max-width: 420px;
+        }
+        .auth-card h1 { color: #1e40af; margin: 0 0 0.5rem; font-size: 1.75rem; }
+        .auth-card .subtitle { color: #64748b; margin-bottom: 2rem; font-size: 0.9rem; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-group label { display: block; margin-bottom: 0.4rem; font-weight: 600; font-size: 0.85rem; color: #334155; }
+        .form-group input {
+            width: 100%; padding: 0.75rem; border: 1px solid #cbd5e1;
+            border-radius: 8px; font-size: 0.95rem; box-sizing: border-box;
+        }
+        .form-group input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        .btn-primary-full {
+            width: 100%; background: #1e40af; color: #fff; border: none;
+            padding: 0.85rem; border-radius: 8px; font-size: 1rem; font-weight: 600;
+            cursor: pointer; margin-top: 0.5rem;
+        }
+        .btn-primary-full:hover { background: #1e3a8a; }
+        .btn-primary-full:disabled { opacity: 0.6; cursor: not-allowed; }
+        .auth-footer { text-align: center; margin-top: 1.5rem; font-size: 0.85rem; color: #64748b; }
+        .auth-footer a { color: #3b82f6; text-decoration: none; font-weight: 600; }
+        .error-msg {
+            background: #fef2f2; border: 1px solid #dc2626; color: #991b1b;
+            padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+        .success-msg {
+            background: #f0fdf4; border: 1px solid #10b981; color: #065f46;
+            padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+        .divider {
+            display: flex; align-items: center; margin: 1.5rem 0;
+            color: #94a3b8; font-size: 0.8rem;
+        }
+        .divider::before, .divider::after {
+            content: ''; flex: 1; height: 1px; background: #e2e8f0; margin: 0 0.75rem;
+        }
+        .guest-link {
+            display: block; text-align: center; padding: 0.7rem;
+            border: 1px solid #cbd5e1; border-radius: 8px;
+            color: #475569; text-decoration: none; font-weight: 600;
+        }
+        .guest-link:hover { background: #f8fafc; }
+    </style>
+</head>
+<body>
+    <div class="auth-card">
+        <h1>👋 Welcome back</h1>
+        <p class="subtitle">Sign in to {{ config.app_title }}</p>
+        
+        <div id="errorBox" class="error-msg" style="display:none;"></div>
+        <div id="successBox" class="success-msg" style="display:none;"></div>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="email" required autocomplete="email">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn-primary-full" id="submitBtn">Sign In</button>
+        </form>
+
+        <div class="auth-footer">
+            No account? <a href="/register">Create a new organization</a>
+        </div>
+
+        <div class="divider">or</div>
+        <a href="/?guest=1" class="guest-link">Continue as Guest</a>
+    </div>
+
+    <script>
+        const form = document.getElementById('loginForm');
+        const errorBox = document.getElementById('errorBox');
+        const btn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorBox.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Signing in...';
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        email: document.getElementById('email').value,
+                        password: document.getElementById('password').value,
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Login failed');
+                }
+                
+                // Redirect to next or dashboard
+                const params = new URLSearchParams(window.location.search);
+                window.location.href = params.get('next') || '/';
+            } catch (err) {
+                errorBox.textContent = '❌ ' + err.message;
+                errorBox.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+            }
+        });
+    </script>
+</body>
+</html>

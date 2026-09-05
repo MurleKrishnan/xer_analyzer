@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel | {{ config.app_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .admin-container { max-width: 1200px; margin: 2rem auto; padding: 0 2rem; }
+        .admin-header {
+            background: linear-gradient(135deg, #1e40af, #3730a3);
+            color: #fff; padding: 2rem; border-radius: 12px; margin-bottom: 2rem;
+        }
+        .admin-header h1 { margin: 0 0 0.5rem; }
+        .admin-header p { opacity: 0.9; margin: 0; }
+        .admin-nav {
+            display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
+            background: #fff; padding: 0.5rem; border-radius: 10px;
+            border: 1px solid #e2e8f0;
+        }
+        .admin-tab {
+            padding: 0.65rem 1.25rem; border-radius: 6px;
+            background: transparent; border: none; cursor: pointer;
+            font-weight: 600; color: #64748b;
+        }
+        .admin-tab.active { background: #eff6ff; color: #1e40af; }
+        .admin-section { display: none; background: #fff; padding: 2rem; border-radius: 12px; }
+        .admin-section.active { display: block; }
+        table.admin-table { width: 100%; border-collapse: collapse; }
+        table.admin-table th {
+            background: #f1f5f9; padding: 0.75rem; text-align: left;
+            font-size: 0.85rem; font-weight: 600; color: #475569;
+        }
+        table.admin-table td {
+            padding: 0.75rem; border-bottom: 1px solid #e2e8f0;
+        }
+        .role-badge {
+            padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.75rem; font-weight: 700;
+        }
+        .role-owner { background: #7c3aed; color: #fff; }
+        .role-admin { background: #dc2626; color: #fff; }
+        .role-manager { background: #f59e0b; color: #fff; }
+        .role-viewer { background: #64748b; color: #fff; }
+        .btn-small {
+            padding: 0.35rem 0.75rem; border-radius: 6px;
+            font-size: 0.8rem; border: 1px solid #cbd5e1; cursor: pointer;
+            background: #fff;
+        }
+        .btn-small:hover { background: #f1f5f9; }
+        .btn-danger { color: #dc2626; border-color: #dc2626; }
+        .btn-danger:hover { background: #fee2e2; }
+        .invite-form {
+            display: flex; gap: 0.5rem; margin-bottom: 1.5rem; padding: 1rem;
+            background: #f8fafc; border-radius: 8px; align-items: end;
+        }
+        .invite-form input, .invite-form select {
+            padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px;
+        }
+        .invite-form input { flex: 1; }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-header">
+            <h1>⚙️ Admin Panel</h1>
+            <p id="orgDisplay">Loading...</p>
+        </div>
+
+        <div class="admin-nav">
+            <button class="admin-tab active" onclick="switchTab('users')">👥 Users</button>
+            <button class="admin-tab" onclick="switchTab('workspaces')">📁 Workspaces</button>
+            <button class="admin-tab" onclick="switchTab('settings')">⚙️ Settings</button>
+        </div>
+
+        <div class="admin-section active" id="tab-users">
+            <h2>Organization Users</h2>
+            <div class="invite-form">
+                <div>
+                    <label style="display:block;font-size:0.8rem;color:#64748b;">Invite Email</label>
+                    <input type="email" id="inviteEmail" placeholder="[email protected]">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.8rem;color:#64748b;">Role</label>
+                    <select id="inviteRole">
+                        <option value="viewer">Viewer</option>
+                        <option value="manager">Manager</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <button class="btn-small" onclick="sendInvite()">📧 Generate Invite Link</button>
+            </div>
+            <div id="inviteResult" style="display:none; padding: 1rem; background: #f0fdf4; border-radius: 8px; margin-bottom: 1rem;"></div>
+            <table class="admin-table">
+                <thead>
+                    <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="usersTable"></tbody>
+            </table>
+        </div>
+
+        <div class="admin-section" id="tab-workspaces">
+            <h2>Workspaces</h2>
+            <p style="color:#64748b;">Workspace management coming soon.</p>
+        </div>
+
+        <div class="admin-section" id="tab-settings">
+            <h2>Organization Settings</h2>
+            <p style="color:#64748b;">Settings management coming soon.</p>
+        </div>
+
+        <div style="margin-top:1rem;text-align:center;">
+            <a href="/" style="color:#3b82f6;">← Back to Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        async function loadData() {
+            const meRes = await fetch('/api/auth/me');
+            const me = await meRes.json();
+            if (me.user) {
+                document.getElementById('orgDisplay').textContent = 
+                    'Managing: ' + me.user.org_name + ' • Logged in as ' + me.user.email;
+            }
+
+            const usersRes = await fetch('/api/auth/users');
+            const usersData = await usersRes.json();
+            const tbody = document.getElementById('usersTable');
+            tbody.innerHTML = (usersData.users || []).map(u => `
+                <tr>
+                    <td><strong>${escapeHtml(u.full_name)}</strong></td>
+                    <td>${escapeHtml(u.email)}</td>
+                    <td><span class="role-badge role-${u.role}">${u.role.toUpperCase()}</span></td>
+                    <td>${u.is_active ? '✅ Active' : '⚠️ Disabled'}</td>
+                    <td style="font-size:0.8rem;color:#64748b;">${u.last_login || '—'}</td>
+                    <td>
+                        <select onchange="changeRole(${u.id}, this.value)" style="padding:0.25rem;">
+                            <option value="viewer" ${u.role==='viewer'?'selected':''}>Viewer</option>
+                            <option value="manager" ${u.role==='manager'?'selected':''}>Manager</option>
+                            <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+                            <option value="owner" ${u.role==='owner'?'selected':''}>Owner</option>
+                        </select>
+                        ${u.is_active ? `<button class="btn-small btn-danger" onclick="deactivate(${u.id})">Deactivate</button>` : ''}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function sendInvite() {
+            const email = document.getElementById('inviteEmail').value;
+            const role = document.getElementById('inviteRole').value;
+            const res = await fetch('/api/auth/invite', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, role})
+            });
+            const data = await res.json();
+            if (data.error) {
+                alert('❌ ' + data.error);
+                return;
+            }
+            const link = window.location.origin + '/accept-invite?token=' + data.invitation.token;
+            const box = document.getElementById('inviteResult');
+            box.innerHTML = `
+                <strong>✅ Invitation created!</strong><br>
+                Share this link with <strong>${escapeHtml(email)}</strong>:<br>
+                <input type="text" value="${escapeHtml(link)}" readonly style="width:100%; padding:0.5rem; margin-top:0.5rem;" onclick="this.select()">
+            `;
+            box.style.display = 'block';
+            document.getElementById('inviteEmail').value = '';
+        }
+
+        async function changeRole(userId, newRole) {
+            if (!confirm('Change role to ' + newRole + '?')) return;
+            const res = await fetch('/api/auth/users/' + userId + '/role', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({role: newRole})
+            });
+            const data = await res.json();
+            if (data.error) alert('❌ ' + data.error);
+            loadData();
+        }
+
+        async function deactivate(userId) {
+            if (!confirm('Deactivate this user? They will not be able to log in.')) return;
+            const res = await fetch('/api/auth/users/' + userId + '/deactivate', {method: 'POST'});
+            const data = await res.json();
+            if (data.error) alert('❌ ' + data.error);
+            loadData();
+        }
+
+        function switchTab(name) {
+            document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
+        }
+
+        function escapeHtml(s) {
+            return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+        }
+
+        loadData();
+    </script>
+</body>
+</html>

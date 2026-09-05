@@ -5,3 +5,9 @@ openpyxl>=3.1.2,<3.2.0
 pandas>=2.1.0,<2.3.0
 gunicorn>=21.2.0,<22.0.0
 reportlab>=4.0.0,<4.2.0
+
+
+# Phase 3 Step 8: Persistent Backend
+SQLAlchemy>=2.0,<3.0
+psycopg2-binary>=2.9  # For PostgreSQL (optional)
+boto3>=1.28  # For S3 storage (optional)

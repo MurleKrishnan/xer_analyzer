@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EVM &amp; S-Curves | {{ config.app_title }}</title>
     
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <!-- Dynamic Theme Overrides from config.py -->
     <style>
         :root {
             --color-primary: {{ config.theme.primary }};
@@ -25,83 +23,116 @@
         }
     </style>
     
-    <!-- App Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     
     <style>
         .evm-metrics {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem; margin-bottom: 2rem;
         }
-        
         .metric-card {
-            background: var(--color-surface, #ffffff);
-            padding: 1.25rem;
-            border-radius: var(--radius-lg, 12px);
-            box-shadow: var(--shadow-md, 0 2px 4px rgba(0,0,0,0.05));
-            border-top: 4px solid var(--color-accent, #3b82f6);
-            border-left: 1px solid var(--color-border, #e2e8f0);
-            border-right: 1px solid var(--color-border, #e2e8f0);
-            border-bottom: 1px solid var(--color-border, #e2e8f0);
+            background: var(--color-surface); padding: 1.25rem;
+            border-radius: var(--radius-lg, 12px); box-shadow: var(--shadow-md, 0 2px 4px rgba(0,0,0,0.05));
+            border-top: 4px solid var(--color-accent);
+            border-left: 1px solid var(--color-border); border-right: 1px solid var(--color-border);
+            border-bottom: 1px solid var(--color-border);
         }
+        .metric-card.good { border-top-color: var(--color-success); }
+        .metric-card.warning { border-top-color: var(--color-warning); }
+        .metric-card.bad { border-top-color: var(--color-danger); }
+        .metric-card.neutral { border-top-color: var(--color-accent); }
+        .metric-label { color: var(--color-muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
+        .metric-value { font-size: 1.75rem; font-weight: 700; color: var(--color-text); }
+        .metric-subtitle { font-size: 0.85rem; color: var(--color-muted); margin-top: 0.25rem; }
+        .status-good { color: var(--color-success); font-weight: 600; }
+        .status-warning { color: var(--color-warning); font-weight: 600; }
+        .status-bad { color: var(--color-danger); font-weight: 600; }
+        .status-neutral { color: var(--color-muted); }
         
-        .metric-card.good { border-top-color: var(--color-success, #10b981); }
-        .metric-card.warning { border-top-color: var(--color-warning, #f59e0b); }
-        .metric-card.bad { border-top-color: var(--color-danger, #dc2626); }
-        .metric-card.neutral { border-top-color: var(--color-accent, #3b82f6); }
-        
-        .metric-label {
-            color: var(--color-muted, #64748b);
-            font-size: 0.85rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .metric-value {
-            font-size: 1.75rem;
-            font-weight: 700;
-            color: var(--color-text, #1e293b);
-        }
-        
-        .metric-subtitle {
-            font-size: 0.85rem;
-            color: var(--color-muted, #64748b);
-            margin-top: 0.25rem;
-        }
-        
-        .status-good { color: var(--color-success, #10b981); font-weight: 600; }
-        .status-warning { color: var(--color-warning, #f59e0b); font-weight: 600; }
-        .status-bad { color: var(--color-danger, #dc2626); font-weight: 600; }
-        .status-neutral { color: var(--color-muted, #64748b); }
-
         a.btn { text-decoration: none; }
         .app-header .btn-secondary[aria-current="page"] {
-            background: rgba(255, 255, 255, 0.4);
-            border-color: #ffffff;
-            font-weight: 700;
+            background: rgba(255, 255, 255, 0.4); border-color: #fff; font-weight: 700;
         }
+
+        /* Resource Analytics Section */
+        .resource-section {
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem;
+        }
+        .resource-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem;
+        }
+        @media (max-width: 900px) {
+            .resource-grid { grid-template-columns: 1fr; }
+        }
+        .resource-stat-box {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem; margin: 1rem 0;
+        }
+        .resource-stat {
+            background: #f8fafc; border: 1px solid var(--color-border);
+            border-radius: 8px; padding: 0.75rem; text-align: center;
+        }
+        .resource-stat .val {
+            font-size: 1.25rem; font-weight: 700; color: var(--color-primary);
+        }
+        .resource-stat .lbl {
+            font-size: 0.7rem; color: var(--color-muted);
+            text-transform: uppercase; letter-spacing: 0.02em; margin-top: 0.25rem;
+        }
+        .chart-wrapper {
+            position: relative; height: 350px; padding: 1rem;
+            background: #fff; border: 1px solid var(--color-border); border-radius: 8px;
+        }
+        .chart-wrapper h4 {
+            font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--color-text);
+        }
+        .top-resource-list {
+            max-height: 400px; overflow-y: auto;
+            background: #fff; border: 1px solid var(--color-border);
+            border-radius: 8px; padding: 0.5rem;
+        }
+        .top-resource-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.5rem; border-bottom: 1px solid var(--color-border);
+            font-size: 0.85rem;
+        }
+        .top-resource-item:last-child { border-bottom: none; }
+        .top-resource-item .name { font-weight: 600; color: var(--color-text); }
+        .top-resource-item .type {
+            font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 999px;
+            background: #e0e7ff; color: #3730a3; margin-left: 0.5rem;
+        }
+        .top-resource-item .val { font-weight: 700; color: var(--color-primary); }
     </style>
+
+    <!-- Activity Inspector Drawer (Global) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='activity_inspector.css') }}">
+    <script defer src="{{ url_for('static', filename='activity_inspector.js') }}"></script>
+
+    <!-- Auth Widget (Auto-injects login/user menu into header) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth_widget.css') }}">
+    <script src="{{ url_for('static', filename='auth_widget.js') }}"></script>
 </head>
 <body>
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
                 {% if config.use_logo_image %}
-                    <img src="{{ url_for('static', filename=config.logo_path) }}" 
-                         alt="Logo" style="height: 45px;">
+                    <img src="{{ url_for('static', filename=config.logo_path) }}" alt="Logo" style="height: 45px;">
                 {% else %}
                     <span class="logo-icon">📈</span>
                 {% endif %}
                 <div>
                     <h1>{{ config.app_title }} — EVM</h1>
-                    <p class="subtitle">Earned Value Management &amp; S-Curves</p>
+                    <p class="subtitle">Earned Value Management &amp; Resource Analytics</p>
                 </div>
             </div>
             <div class="header-actions">
                 <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
                 <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/trends" class="btn btn-secondary">📈 Trends</a>
                 <a href="/evm" class="btn btn-secondary" aria-current="page">📈 EVM</a>
                 <a href="/health" class="btn btn-secondary">🏥 Health</a>
             </div>
@@ -109,46 +140,86 @@
     </header>
 
     <main class="app-main">
-        <!-- LOADING / ERROR MESSAGE -->
         <div id="loadingMessage" class="loading-screen" style="display:flex;">
             <div class="spinner"></div>
             <p>Loading EVM data...</p>
         </div>
 
-        <!-- EVM CONTENT (shown on data load) -->
         <div id="evmContent" style="display:none;">
             <div class="file-info-bar">
                 <span>📁 <strong id="fileName">--</strong></span>
                 <span>📅 Data Date: <strong id="dataDate">--</strong></span>
             </div>
 
-            <!-- Performance Indicators -->
             <h2 style="margin-bottom:1rem;">📈 Performance Indicators</h2>
             <div class="evm-metrics" id="performanceMetrics"></div>
 
-            <!-- Financial Metrics -->
             <h2 style="margin-bottom:1rem;">💰 Financial Metrics</h2>
             <div class="evm-metrics" id="financialMetrics"></div>
 
-            <!-- S-Curve -->
             <div class="chart-card" style="margin-bottom:2rem;">
                 <h3>📈 Project S-Curve</h3>
-                <p style="color:var(--color-muted, #64748b); font-size:0.85rem; margin-bottom:1rem;">
+                <p style="color:var(--color-muted); font-size:0.85rem; margin-bottom:1rem;">
                     Cumulative value over time showing Planned Value (PV), Earned Value (EV), and Actual Cost (AC) through Data Date.
                 </p>
-                <div id="scurveError" style="display:none; color:var(--color-danger, #dc2626); padding:0.5rem 0;"></div>
+                <div id="scurveError" style="display:none; color:var(--color-danger); padding:0.5rem 0;"></div>
                 <div style="height:400px; position:relative;">
                     <canvas id="scurveChart"></canvas>
                 </div>
             </div>
 
-            <!-- Explanation / Glossary -->
+            <!-- ═══════════════════════════════════════ -->
+            <!-- 👷 RESOURCE ANALYTICS SECTION -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="resource-section" id="resourceSection" style="display:none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <h2 style="margin: 0;">👷 Resource &amp; Labor Analytics</h2>
+                    <button type="button" class="btn btn-primary" onclick="loadResourceData(true)">
+                        🔄 Refresh
+                    </button>
+                </div>
+                <p style="color:var(--color-muted); font-size:0.85rem; margin-bottom:1rem;">
+                    Monthly labor hours (stacked by resource type), cost burn rate, and top resource drivers.
+                </p>
+
+                <div id="resourceErrorBox" style="display:none; padding: 1rem; background: #fef2f2; border-radius: 8px; color: var(--color-danger); margin-bottom: 1rem;"></div>
+
+                <div class="resource-stat-box" id="resourceStats"></div>
+
+                <!-- Monthly Man-Hours Histogram -->
+                <div class="chart-wrapper" style="margin-bottom: 1.5rem;">
+                    <h4>📊 Monthly Man-Hours by Resource Type</h4>
+                    <canvas id="monthlyUnitsChart"></canvas>
+                </div>
+
+                <!-- Monthly Cost Burn Rate -->
+                <div class="chart-wrapper" style="margin-bottom: 1.5rem;">
+                    <h4>💰 Monthly Cost Burn Rate (Planned vs Actual)</h4>
+                    <canvas id="monthlyCostChart"></canvas>
+                </div>
+
+                <div class="resource-grid">
+                    <!-- Cumulative Units Curve -->
+                    <div class="chart-wrapper">
+                        <h4>📈 Cumulative Man-Hours Curve</h4>
+                        <canvas id="cumulativeUnitsChart"></canvas>
+                    </div>
+                    <!-- Top Resources by Units -->
+                    <div>
+                        <h4 style="font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--color-text);">
+                            🏆 Top 20 Resources by Man-Hours
+                        </h4>
+                        <div class="top-resource-list" id="topResourcesUnits"></div>
+                    </div>
+                </div>
+            </div>
+
             <div class="dcma-section">
                 <h3>📖 What Do These Metrics Mean?</h3>
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:1.25rem; margin-top:1rem;">
                     <div>
                         <h4>SPI (Schedule Performance Index)</h4>
-                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
+                        <p style="font-size:0.875rem; color:var(--color-muted); margin-top:0.25rem;">
                             <strong>≥ 1.0:</strong> Ahead of schedule ✅<br>
                             <strong>0.95 – 0.99:</strong> Slightly behind ⚠️<br>
                             <strong>&lt; 0.95:</strong> Significantly behind ❌
@@ -156,24 +227,22 @@
                     </div>
                     <div>
                         <h4>CPI (Cost Performance Index)</h4>
-                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
+                        <p style="font-size:0.875rem; color:var(--color-muted); margin-top:0.25rem;">
                             <strong>≥ 1.0:</strong> Under budget ✅<br>
                             <strong>0.95 – 0.99:</strong> Slightly over budget ⚠️<br>
                             <strong>&lt; 0.95:</strong> Significantly over budget ❌
                         </p>
                     </div>
                     <div>
-                        <h4>EAC &amp; ETC</h4>
-                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
-                            <strong>EAC:</strong> Forecasted total cost at completion (BAC / CPI).<br>
-                            <strong>ETC:</strong> Forecasted remaining cost (EAC − AC).
+                        <h4>Peak Labor Month</h4>
+                        <p style="font-size:0.875rem; color:var(--color-muted); margin-top:0.25rem;">
+                            The month with the highest planned man-hour demand. Useful for resource leveling and crew planning.
                         </p>
                     </div>
                     <div>
-                        <h4>VAC (Variance at Completion)</h4>
-                        <p style="font-size:0.875rem; color:var(--color-muted, #64748b); margin-top:0.25rem;">
-                            Difference between original budget and forecasted final cost (BAC − EAC).<br>
-                            <strong>Positive:</strong> Forecasted under budget ✅
+                        <h4>Cumulative Curves</h4>
+                        <p style="font-size:0.875rem; color:var(--color-muted); margin-top:0.25rem;">
+                            Show cumulative labor buildup over time — indicator of ramp-up, peak execution, and demobilization phases.
                         </p>
                     </div>
                 </div>
@@ -181,7 +250,6 @@
         </div>
     </main>
 
-    <!-- FOOTER -->
     <footer class="app-footer">
         <p>&copy; {{ config.footer_year }} {{ config.company_name }} | {{ config.footer_text }}</p>
     </footer>

@@ -5,13 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Compare Schedules | {{ config.app_title }}</title>
     
-    <!-- Chart.js & DataTables -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
 
-    <!-- Dynamic Theme Overrides from config.py -->
     <style>
         :root {
             --color-primary: {{ config.theme.primary }};
@@ -28,84 +26,146 @@
         }
     </style>
     
-    <!-- App Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     
     <style>
-        .compare-upload {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
-            margin: 2rem 0;
-        }
-        
+        .compare-upload { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 2rem 0; }
         .file-drop {
-            background: var(--color-surface, #ffffff);
-            border: 3px dashed var(--color-border, #cbd5e1);
-            border-radius: var(--radius-lg, 12px);
-            padding: 2rem;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s;
+            background: var(--color-surface); border: 3px dashed var(--color-border);
+            border-radius: 12px; padding: 2rem; text-align: center;
+            cursor: pointer; transition: all 0.2s;
         }
-        
         .file-drop:hover, .file-drop.dragover {
-            border-color: var(--color-accent, #3b82f6);
-            background: rgba(59, 130, 246, 0.05);
+            border-color: var(--color-accent); background: rgba(59, 130, 246, 0.05);
         }
-        
         .file-drop.has-file {
-            border-color: var(--color-success, #10b981);
-            background: rgba(16, 185, 129, 0.05);
+            border-color: var(--color-success); background: rgba(16, 185, 129, 0.05);
         }
-        
-        .file-drop h3 {
-            margin-bottom: 0.5rem;
-        }
-        
+        .file-drop h3 { margin-bottom: 0.5rem; }
         .comparison-summary {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 1rem;
-            margin: 2rem 0;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem; margin: 2rem 0;
         }
-        
         .change-badge {
-            padding: 0.15rem 0.5rem;
-            border-radius: 8px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            display: inline-block;
+            padding: 0.15rem 0.5rem; border-radius: 8px;
+            font-size: 0.75rem; font-weight: 700; display: inline-block;
         }
-        
         .change-badge.high { background: #fee2e2; color: #991b1b; }
         .change-badge.medium { background: #fef3c7; color: #92400e; }
         .change-badge.low { background: #dbeafe; color: #1e40af; }
-        
-        .delta-positive { color: var(--color-danger, #dc2626); font-weight: 600; }
-        .delta-negative { color: var(--color-success, #10b981); font-weight: 600; }
+        .delta-positive { color: var(--color-danger); font-weight: 600; }
+        .delta-negative { color: var(--color-success); font-weight: 600; }
 
         a.btn { text-decoration: none; }
         .app-header .btn-secondary[aria-current="page"] {
-            background: rgba(255, 255, 255, 0.4);
-            border-color: #ffffff;
-            font-weight: 700;
+            background: rgba(255, 255, 255, 0.4); border-color: #fff; font-weight: 700;
         }
 
         @media (max-width: 768px) {
-            .compare-upload {
-                grid-template-columns: 1fr;
-            }
+            .compare-upload { grid-template-columns: 1fr; }
         }
+
+        /* ═══════════════════════════════════════ */
+        /* DUAL-BAR VARIANCE GANTT STYLES        */
+        /* ═══════════════════════════════════════ */
+        .variance-gantt-section {
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem;
+        }
+        .variance-gantt-toolbar {
+            display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;
+            margin-bottom: 1rem; padding: 0.75rem;
+            background: #f8fafc; border: 1px solid var(--color-border); border-radius: 8px;
+        }
+        .variance-gantt-toolbar select, .variance-gantt-toolbar input {
+            padding: 0.4rem 0.6rem; border: 1px solid var(--color-border);
+            border-radius: 6px; font-size: 0.85rem; background: #fff;
+        }
+        .variance-gantt-toolbar label {
+            font-size: 0.8rem; color: var(--color-muted); font-weight: 600;
+        }
+        .variance-gantt-container {
+            width: 100%; overflow-x: auto;
+            border: 1px solid var(--color-border); border-radius: 8px; background: #fff;
+        }
+        .variance-gantt-table {
+            width: 100%; border-collapse: collapse; font-size: 0.82rem;
+        }
+        .variance-gantt-table thead {
+            background: var(--color-primary); color: #fff; position: sticky; top: 0;
+        }
+        .variance-gantt-table th {
+            padding: 0.55rem 0.6rem; text-align: left; font-weight: 600;
+            border-right: 1px solid rgba(255,255,255,0.15);
+        }
+        .variance-gantt-table td {
+            padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--color-border);
+            vertical-align: middle;
+        }
+        .variance-gantt-table tbody tr:hover { background: #f1f5f9; }
+        .variance-gantt-table tbody tr.critical-row { background: #fef2f2; }
+        .variance-gantt-table tbody tr.critical-row:hover { background: #fee2e2; }
+        
+        .var-bars-cell {
+            position: relative; min-width: 300px; padding: 0.5rem 0.75rem !important;
+        }
+        .var-bar-row {
+            position: relative; height: 14px; margin: 3px 0; border-radius: 3px;
+            display: flex; align-items: center; overflow: hidden;
+        }
+        .var-bar-baseline { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+        .var-bar-current-slipped { background: linear-gradient(90deg, #dc2626, #ef4444); }
+        .var-bar-current-improved { background: linear-gradient(90deg, #10b981, #34d399); }
+        .var-bar-current-unchanged { background: linear-gradient(90deg, #64748b, #94a3b8); }
+        .var-bar-added { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+        .var-bar-deleted { background: linear-gradient(90deg, #94a3b8, #cbd5e1); opacity: 0.6; }
+        .var-bar-label {
+            font-size: 0.65rem; color: #fff; font-weight: 600;
+            padding: 0 0.4rem; white-space: nowrap; text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+        }
+        .var-milestone {
+            width: 12px; height: 12px; transform: rotate(45deg);
+            display: inline-block; margin: 3px 0;
+        }
+        .var-milestone.baseline { background: #3b82f6; }
+        .var-milestone.slipped { background: #dc2626; }
+        .var-milestone.improved { background: #10b981; }
+        .var-milestone.unchanged { background: #64748b; }
+        
+        .var-legend {
+            display: flex; gap: 1rem; flex-wrap: wrap;
+            padding: 0.75rem; margin-bottom: 1rem;
+            background: #f8fafc; border: 1px solid var(--color-border); border-radius: 8px;
+            font-size: 0.8rem;
+        }
+        .var-legend-item { display: flex; align-items: center; gap: 0.4rem; }
+        .var-legend-swatch { width: 20px; height: 12px; border-radius: 2px; }
+        
+        .variance-badge {
+            display: inline-block; padding: 0.15rem 0.5rem; border-radius: 12px;
+            font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+        }
+        .variance-badge.slipped { background: #fee2e2; color: #991b1b; }
+        .variance-badge.improved { background: #d1fae5; color: #065f46; }
+        .variance-badge.unchanged { background: #e2e8f0; color: #475569; }
+        .variance-badge.added { background: #ede9fe; color: #5b21b6; }
+        .variance-badge.deleted { background: #f1f5f9; color: #475569; }
     </style>
+
+    <!-- Activity Inspector Drawer (Global) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='activity_inspector.css') }}">
+    <script defer src="{{ url_for('static', filename='activity_inspector.js') }}"></script>
+
+    <!-- Auth Widget (Auto-injects login/user menu into header) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth_widget.css') }}">
+    <script src="{{ url_for('static', filename='auth_widget.js') }}"></script>
 </head>
 <body>
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
                 {% if config.use_logo_image %}
-                    <img src="{{ url_for('static', filename=config.logo_path) }}" 
-                         alt="Logo" style="height: 45px;">
+                    <img src="{{ url_for('static', filename=config.logo_path) }}" alt="Logo" style="height: 45px;">
                 {% else %}
                     <span class="logo-icon">🔄</span>
                 {% endif %}
@@ -118,6 +178,7 @@
                 <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
                 <a href="/comparison" class="btn btn-secondary" aria-current="page">🔄 Compare</a>
+                <a href="/trends" class="btn btn-secondary">📈 Trends</a>
                 <a href="/evm" class="btn btn-secondary">📈 EVM</a>
                 <a href="/health" class="btn btn-secondary">🏥 Health</a>
             </div>
@@ -125,29 +186,25 @@
     </header>
 
     <main class="app-main">
-        <!-- UPLOAD ZONE -->
         <div id="uploadSection">
-            <h2>Upload Two XER Files to Compare</h2>
-            <p style="color:var(--color-muted, #64748b); margin-bottom:1rem;">
+            <h2>Upload Two Schedule Files to Compare</h2>
+            <p style="color:var(--color-muted); margin-bottom:1rem;">
                 Compare a baseline schedule with an updated update to track slippage, added/deleted scope, and logic changes.
             </p>
-            
             <div class="compare-upload">
                 <div class="file-drop" id="baselineDrop">
                     <h3>📊 Baseline</h3>
                     <p>Original / Approved Schedule</p>
-                    <p id="baselineFileName" style="margin-top:1rem; font-weight:600; color:var(--color-accent, #3b82f6);"></p>
-                    <input type="file" id="baselineInput" accept=".xer" style="display:none;">
+                    <p id="baselineFileName" style="margin-top:1rem; font-weight:600; color:var(--color-accent);"></p>
+                    <input type="file" id="baselineInput" accept=".xer,.xml" style="display:none;">
                 </div>
-                
                 <div class="file-drop" id="currentDrop">
                     <h3>📈 Current</h3>
                     <p>Updated / Latest Schedule</p>
-                    <p id="currentFileName" style="margin-top:1rem; font-weight:600; color:var(--color-accent, #3b82f6);"></p>
-                    <input type="file" id="currentInput" accept=".xer" style="display:none;">
+                    <p id="currentFileName" style="margin-top:1rem; font-weight:600; color:var(--color-accent);"></p>
+                    <input type="file" id="currentInput" accept=".xer,.xml" style="display:none;">
                 </div>
             </div>
-            
             <div style="text-align:center;">
                 <button id="compareBtn" class="btn btn-primary" disabled 
                         style="padding: 0.85rem 3rem; font-size: 1.1rem;">
@@ -156,13 +213,11 @@
             </div>
         </div>
 
-        <!-- LOADING SPINNER -->
         <div id="loadingSection" class="loading-screen" style="display:none;">
             <div class="spinner"></div>
             <p style="margin-top:1rem;">Comparing schedules...</p>
         </div>
 
-        <!-- RESULTS SECTION -->
         <div id="resultsSection" style="display:none;">
             <div class="file-info-bar">
                 <span>📊 Baseline: <strong id="baselineName">--</strong></span>
@@ -172,10 +227,8 @@
                 </button>
             </div>
 
-            <!-- Summary Cards -->
             <div class="comparison-summary" id="summaryCards"></div>
 
-            <!-- Chart -->
             <div class="chart-card" style="margin-bottom:2rem;">
                 <h3>📊 Scope &amp; Variance Breakdown</h3>
                 <div style="height: 300px; position: relative;">
@@ -183,22 +236,88 @@
                 </div>
             </div>
 
-            <!-- Critical Path Changes -->
+            <!-- ═══════════════════════════════════════ -->
+            <!-- 🎯 DUAL-BAR VARIANCE GANTT SECTION -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="variance-gantt-section" id="varianceGanttSection" style="display:none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <h2 style="margin: 0;">🎯 Dual-Bar Variance Gantt</h2>
+                    <span id="varianceGanttStats" style="font-size: 0.85rem; color: var(--color-muted);"></span>
+                </div>
+                
+                <div class="var-legend">
+                    <div class="var-legend-item"><div class="var-legend-swatch" style="background: #3b82f6;"></div>Baseline</div>
+                    <div class="var-legend-item"><div class="var-legend-swatch" style="background: #dc2626;"></div>Slipped</div>
+                    <div class="var-legend-item"><div class="var-legend-swatch" style="background: #10b981;"></div>Improved</div>
+                    <div class="var-legend-item"><div class="var-legend-swatch" style="background: #64748b;"></div>Unchanged</div>
+                    <div class="var-legend-item"><div class="var-legend-swatch" style="background: #8b5cf6;"></div>Added</div>
+                    <div class="var-legend-item"><div class="var-legend-swatch" style="background: #94a3b8;"></div>Deleted</div>
+                </div>
+
+                <div class="variance-gantt-toolbar">
+                    <label>Filter:</label>
+                    <select id="varianceFilter" onchange="renderVarianceGantt()">
+                        <option value="all">All Activities</option>
+                        <option value="slipped">Slipped Only</option>
+                        <option value="improved">Improved Only</option>
+                        <option value="critical">Critical Only</option>
+                        <option value="added">Added Only</option>
+                        <option value="deleted">Deleted Only</option>
+                    </select>
+                    
+                    <label>Sort:</label>
+                    <select id="varianceSort" onchange="renderVarianceGantt()">
+                        <option value="delta_desc">Slippage (Highest First)</option>
+                        <option value="delta_asc">Improvement (Highest First)</option>
+                        <option value="code_asc">Activity Code (A-Z)</option>
+                        <option value="start_asc">Baseline Start Date</option>
+                    </select>
+                    
+                    <label>Search:</label>
+                    <input type="search" id="varianceSearch" placeholder="Code or name…" oninput="debouncedVarianceRender()">
+                    
+                    <label>Max:</label>
+                    <select id="varianceLimit" onchange="renderVarianceGantt()">
+                        <option value="50">50 rows</option>
+                        <option value="100" selected>100 rows</option>
+                        <option value="250">250 rows</option>
+                        <option value="500">500 rows</option>
+                        <option value="9999">All</option>
+                    </select>
+                </div>
+
+                <div class="variance-gantt-container">
+                    <table class="variance-gantt-table" id="varianceGanttTable">
+                        <thead>
+                            <tr>
+                                <th style="width: 100px;">Code</th>
+                                <th style="width: 200px;">Activity</th>
+                                <th style="width: 130px;">WBS</th>
+                                <th style="width: 90px;">Baseline Finish</th>
+                                <th style="width: 90px;">Current Finish</th>
+                                <th style="width: 80px;">Variance</th>
+                                <th>Timeline (Top: Baseline / Bottom: Current)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
             <div class="dcma-section">
                 <h2>🔴 Critical Path Shifts</h2>
                 <div class="charts-grid">
                     <div>
-                        <h3 style="color:var(--color-danger, #dc2626); margin-bottom: 0.75rem;">➕ Newly Critical</h3>
+                        <h3 style="color:var(--color-danger); margin-bottom: 0.75rem;">➕ Newly Critical</h3>
                         <div id="newlyCriticalList"></div>
                     </div>
                     <div>
-                        <h3 style="color:var(--color-success, #10b981); margin-bottom: 0.75rem;">➖ No Longer Critical</h3>
+                        <h3 style="color:var(--color-success); margin-bottom: 0.75rem;">➖ No Longer Critical</h3>
                         <div id="noLongerCriticalList"></div>
                     </div>
                 </div>
             </div>
 
-            <!-- Logic & Relationship Changes -->
             <div class="dcma-section" id="relationshipSection" style="display:none;">
                 <h2>🔗 Logic &amp; Relationship Changes</h2>
                 <div class="comparison-summary" id="relSummaryCards"></div>
@@ -216,56 +335,39 @@
                 </table>
             </div>
 
-            <!-- Changed Activities -->
             <div class="dcma-section">
                 <h2>🔄 Changed Activities</h2>
                 <table id="changedTable" class="data-table">
                     <thead>
                         <tr>
-                            <th>Code</th>
-                            <th>Name</th>
-                            <th>WBS</th>
-                            <th>Field</th>
-                            <th>Baseline</th>
-                            <th>Current</th>
-                            <th>Delta</th>
-                            <th>Impact</th>
+                            <th>Code</th><th>Name</th><th>WBS</th><th>Field</th>
+                            <th>Baseline</th><th>Current</th><th>Delta</th><th>Impact</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 </table>
             </div>
 
-            <!-- Added Activities -->
             <div class="dcma-section">
                 <h2>➕ Added Activities</h2>
                 <table id="addedTable" class="data-table">
                     <thead>
                         <tr>
-                            <th>Code</th>
-                            <th>Name</th>
-                            <th>WBS</th>
-                            <th>Duration</th>
-                            <th>Start</th>
-                            <th>Finish</th>
+                            <th>Code</th><th>Name</th><th>WBS</th>
+                            <th>Duration</th><th>Start</th><th>Finish</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 </table>
             </div>
 
-            <!-- Deleted Activities -->
             <div class="dcma-section">
                 <h2>➖ Deleted Activities</h2>
                 <table id="deletedTable" class="data-table">
                     <thead>
                         <tr>
-                            <th>Code</th>
-                            <th>Name</th>
-                            <th>WBS</th>
-                            <th>Duration</th>
-                            <th>Start</th>
-                            <th>Finish</th>
+                            <th>Code</th><th>Name</th><th>WBS</th>
+                            <th>Duration</th><th>Start</th><th>Finish</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -274,7 +376,6 @@
         </div>
     </main>
 
-    <!-- FOOTER -->
     <footer class="app-footer">
         <p>&copy; {{ config.footer_year }} {{ config.company_name }} | {{ config.footer_text }}</p>
     </footer>

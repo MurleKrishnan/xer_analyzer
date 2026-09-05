@@ -203,6 +203,8 @@
 
         /* Activity bars */
         .gantt_task_line.gantt-critical { background-color: #dc2626 !important; border-color: #991b1b; }
+        .gantt_task_line.gantt-longest-path { background-color: #7c3aed !important; border-color: #5b21b6; }
+        .gantt_row.longest-path-row { background-color: #f3e8ff !important; }
         .gantt_task_line.gantt-completed { background-color: #10b981 !important; }
         .gantt_task_line.gantt-normal { background-color: #3b82f6 !important; }
         .gantt_row.critical-row { background-color: #fef2f2; }
@@ -244,6 +246,14 @@
             .toolbar-group { border-right: none; padding-right: 0; }
         }
     </style>
+
+    <!-- Activity Inspector Drawer (Global) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='activity_inspector.css') }}">
+    <script defer src="{{ url_for('static', filename='activity_inspector.js') }}"></script>
+
+    <!-- Auth Widget (Auto-injects login/user menu into header) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth_widget.css') }}">
+    <script src="{{ url_for('static', filename='auth_widget.js') }}"></script>
 </head>
 <body>
     <div class="gantt-page">
@@ -265,6 +275,7 @@
                     <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                     <a href="/gantt" class="btn btn-secondary" aria-current="page">📅 Gantt</a>
                     <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/trends" class="btn btn-secondary">📈 Trends</a>
                     <a href="/evm" class="btn btn-secondary">📈 EVM</a>
                     <a href="/health" class="btn btn-secondary">🏥 Health</a>
                 </div>
@@ -298,8 +309,11 @@
                 </select>
             </div>
             <div class="toolbar-group">
+                <button type="button" class="tb-btn" onclick="toggleLongestPath()">
+                    <span id="longestPathBtn">🎯 Longest Path Only</span>
+                </button>
                 <button type="button" class="tb-btn" onclick="toggleCritical()">
-                    <span id="criticalBtn">🔴 Critical Only</span>
+                    <span id="criticalBtn">🔴 Critical (TF≤0) Only</span>
                 </button>
                 <button type="button" class="tb-btn" onclick="scrollToToday()">📅 Today</button>
                 <button type="button" class="tb-btn" onclick="fitAll()">↔️ Fit All</button>

@@ -76,6 +76,7 @@ let allTasks = [];
 let allLinks = [];
 let groupableValues = {};
 let showCriticalOnly = false;
+let showLongestPathOnly = false;
 let showWbsOnly = false;
 let ganttDataDate = null;
 
@@ -197,6 +198,7 @@ function initGantt() {
         if (task.is_grand_total) return 'gantt-grand-total';
         if (task.is_wbs_summary) return 'gantt-wbs-summary';
         if (task.is_group) return 'gantt-group-l' + (task.group_level || 1);
+        if (task.is_longest_path) return 'longest-path-row';
         if (task.is_critical) return 'critical-row';
         return '';
     };
@@ -205,6 +207,7 @@ function initGantt() {
         if (task.is_grand_total) return 'gantt-grand-total';
         if (task.is_wbs_summary) return 'gantt-wbs-l' + Math.min(task.wbs_depth || 1, 12);
         if (task.is_group) return 'gantt-summary-l' + (task.group_level || 1);
+        if (task.is_longest_path) return 'gantt-longest-path';
         return task.custom_class || '';
     };
 
@@ -356,7 +359,8 @@ function loadData(maxActivities) {
                 stats.textContent =
                     '📌 ' + (data.total || 0) + ' activities | 🌳 ' +
                     (data.wbs_summary_count || 0) + ' WBS | 🔴 ' +
-                    (data.critical_count || 0) + ' critical | rows: ' + allTasks.length;
+                    (data.critical_count || 0) + ' critical | 🎯 ' +
+                    (data.longest_path_count || 0) + ' longest path | rows: ' + allTasks.length;
             }
 
             renderGantt();
@@ -449,6 +453,11 @@ function renderGantt() {
     if (showCriticalOnly) {
         tasksToShow = tasksToShow.filter(function (t) {
             return t.is_wbs_summary || t.is_critical;
+        });
+    }
+    if (showLongestPathOnly) {
+        tasksToShow = tasksToShow.filter(function (t) {
+            return t.is_wbs_summary || t.is_longest_path;
         });
     }
     tasksToShow = tasksToShow.filter(function (t) {
@@ -777,6 +786,17 @@ function toggleCritical() {
     renderGantt();
 }
 
+
+
+function toggleLongestPath() {
+    showLongestPathOnly = !showLongestPathOnly;
+    const el = document.getElementById('longestPathBtn');
+    const btn = el ? el.closest('.tb-btn') : null;
+    if (btn) btn.classList.toggle('active', showLongestPathOnly);
+    if (el) el.textContent = showLongestPathOnly ? '🎯 Longest Path Only ✓' : '🎯 Longest Path Only';
+    renderGantt();
+}
+
 function toggleWbsSummary() {
     showWbsOnly = !showWbsOnly;
     const el = document.getElementById('wbsSummaryBtn');
@@ -965,3 +985,5 @@ document.addEventListener('click', function (e) {
         e.target.classList.remove('show');
     }
 });
+
+window.toggleLongestPath = toggleLongestPath;

@@ -90,7 +90,7 @@ ENABLE_EVM = True
 ENABLE_EXPORT = True
 ENABLE_HEALTH = True
 
-MAX_UPLOAD_SIZE_MB = 100
+MAX_UPLOAD_SIZE_MB = 1000
 MAX_GANTT_ACTIVITIES = 2000
 DEFAULT_PORT = int(os.environ.get('PORT', 5000))
 
@@ -138,3 +138,23 @@ def get_config():
             'max_items_pdf': MAX_ITEMS_PER_CHECK_PDF,
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════
+# PHASE 3 STEP 8: PERSISTENT BACKEND CONFIGURATION
+# ═══════════════════════════════════════════════════════════
+# All are optional — app auto-falls-back to local dev mode
+
+# Database (optional — defaults to SQLite ./analyzer.db)
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+
+# Object Storage (optional — defaults to local ./uploads/)
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', '')
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+
+# Task Queue (optional — defaults to in-process threads)
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', '')
+WORKER_THREADS = int(os.environ.get('WORKER_THREADS', '2'))
+
+# Project retention (days)
+PROJECT_RETENTION_DAYS = int(os.environ.get('PROJECT_RETENTION_DAYS', '7'))

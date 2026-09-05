@@ -32,6 +32,14 @@
 
     <!-- Custom App Styles -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+    <!-- Activity Inspector Drawer (Global) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='activity_inspector.css') }}">
+    <script defer src="{{ url_for('static', filename='activity_inspector.js') }}"></script>
+
+    <!-- Auth Widget (Auto-injects login/user menu into header) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth_widget.css') }}">
+    <script src="{{ url_for('static', filename='auth_widget.js') }}"></script>
 </head>
 
 <body>
@@ -59,14 +67,15 @@
             
             <div class="header-actions">
                 <button id="loadSampleBtn" class="btn btn-secondary">📄 Load Sample</button>
-                <button id="uploadBtn" class="btn btn-primary">📁 Upload XER</button>
+                <button id="uploadBtn" class="btn btn-primary">📁 Upload Schedule</button>
                 <a href="/" class="btn btn-secondary" aria-current="page">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
                 <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/trends" class="btn btn-secondary">📈 Trends</a>
                 <a href="/evm" class="btn btn-secondary">📈 EVM</a>
                 <a href="/health" class="btn btn-secondary">🏥 Health</a>
                 <button id="exportBtn" class="btn btn-success" style="display:none;">⬇️ Export Excel</button>
-                <input type="file" id="fileInput" accept=".xer" style="display:none;">
+                <input type="file" id="fileInput" accept=".xer,.xml" style="display:none;">
             </div>
         </div>
     </header>
@@ -79,13 +88,13 @@
             <div class="welcome-content">
                 <div class="welcome-icon">🚀</div>
                 <h2>Welcome to {{ config.app_title }}</h2>
-                <p>Upload your Primavera P6 XER file to get started</p>
+                <p>Upload your Primavera P6 Schedule file to get started</p>
                 
                 <div class="upload-zone" id="dropZone">
                     <div class="upload-zone-content">
                         <span class="upload-icon">📤</span>
-                        <p><strong>Drop your XER file here</strong></p>
-                        <p>or click "Upload XER" button above</p>
+                        <p><strong>Drop your Schedule file here</strong></p>
+                        <p>or click "Upload Schedule" button above</p>
                     </div>
                 </div>
                 

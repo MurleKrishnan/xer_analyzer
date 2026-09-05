@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Schedule Health | {{ config.app_title }}</title>
 
-    <!-- Dynamic theme from config.py -->
     <style>
         :root {
             --color-primary: {{ config.theme.primary }};
@@ -31,309 +30,121 @@
             border-color: #fff;
             font-weight: 700;
         }
-
-        /* Standard selector */
-        .std-selector {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-bottom: 1.25rem;
-        }
+        .std-selector { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
         .std-select-btn {
-            padding: 0.45rem 0.9rem;
-            border-radius: 999px;
-            border: 1px solid var(--color-border, #e2e8f0);
-            background: var(--color-surface, #fff);
-            color: var(--color-text, #1e293b);
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s;
+            padding: 0.45rem 0.9rem; border-radius: 999px; border: 1px solid var(--color-border);
+            background: var(--color-surface); color: var(--color-text);
+            font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s;
         }
-        .std-select-btn:hover {
-            border-color: var(--color-accent, #3b82f6);
-            color: var(--color-accent, #3b82f6);
-        }
-        .std-select-btn.active {
-            background: var(--color-primary, #1e40af);
-            border-color: var(--color-primary, #1e40af);
-            color: #fff;
-        }
-
-        /* Overall score hero */
+        .std-select-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+        .std-select-btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+        
         .health-hero {
-            background: var(--color-surface, #fff);
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 1.25rem;
+            background: var(--color-surface); border: 1px solid var(--color-border);
+            border-radius: 12px; padding: 1.5rem; margin-bottom: 1.25rem;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            display: grid;
-            grid-template-columns: minmax(160px, 220px) 1fr;
-            gap: 1.5rem;
-            align-items: center;
+            display: grid; grid-template-columns: minmax(160px, 220px) 1fr;
+            gap: 1.5rem; align-items: center;
         }
-        @media (max-width: 768px) {
-            .health-hero { grid-template-columns: 1fr; text-align: center; }
-        }
+        @media (max-width: 768px) { .health-hero { grid-template-columns: 1fr; text-align: center; } }
         .score-ring {
-            text-align: center;
-            padding: 1rem;
-            border-radius: 12px;
-            background: linear-gradient(135deg, #eff6ff, #f8fafc);
-            border: 1px solid var(--color-border, #e2e8f0);
+            text-align: center; padding: 1rem; border-radius: 12px;
+            background: linear-gradient(135deg, #eff6ff, #f8fafc); border: 1px solid var(--color-border);
         }
-        .score-ring .big {
-            font-size: 3rem;
-            font-weight: 800;
-            color: var(--color-primary, #1e40af);
-            line-height: 1.1;
-        }
-        .score-ring .sub {
-            font-size: 0.85rem;
-            color: var(--color-muted, #64748b);
-        }
-        .hero-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 0.75rem;
-        }
-        .hero-stat {
-            background: #f8fafc;
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 8px;
-            padding: 0.75rem;
-        }
-        .hero-stat .val {
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: var(--color-text, #1e293b);
-        }
-        .hero-stat .lbl {
-            font-size: 0.75rem;
-            color: var(--color-muted, #64748b);
-            text-transform: uppercase;
-            letter-spacing: 0.02em;
-        }
-        .hero-stat.danger .val { color: var(--color-danger, #dc2626); }
+        .score-ring .big { font-size: 3rem; font-weight: 800; color: var(--color-primary); line-height: 1.1; }
+        .score-ring .sub { font-size: 0.85rem; color: var(--color-muted); }
+        .hero-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
+        .hero-stat { background: #f8fafc; border: 1px solid var(--color-border); border-radius: 8px; padding: 0.75rem; }
+        .hero-stat .val { font-size: 1.35rem; font-weight: 700; color: var(--color-text); }
+        .hero-stat .lbl { font-size: 0.75rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.02em; }
+        .hero-stat.danger .val { color: var(--color-danger); }
 
-        /* Per-standard score cards */
-        .score-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-            gap: 0.85rem;
-            margin-bottom: 1.5rem;
-        }
+        .score-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.85rem; margin-bottom: 1.5rem; }
         .std-score-card {
-            background: var(--color-surface, #fff);
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 10px;
-            padding: 1rem;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-            transition: transform 0.15s, box-shadow 0.15s;
-            border-top: 4px solid #94a3b8;
+            background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px;
+            padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: transform 0.15s, box-shadow 0.15s; border-top: 4px solid #94a3b8;
         }
-        .std-score-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0,0,0,0.08);
-        }
+        .std-score-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
         .std-score-card.green { border-top-color: #10b981; }
         .std-score-card.blue { border-top-color: #3b82f6; }
         .std-score-card.orange { border-top-color: #f59e0b; }
         .std-score-card.red { border-top-color: #dc2626; }
-        .std-score-value {
-            font-size: 1.75rem;
-            font-weight: 800;
-            margin: 0.25rem 0;
-            color: var(--color-text, #1e293b);
-        }
-        .std-score-grade {
-            display: inline-block;
-            padding: 0.15rem 0.55rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            margin-bottom: 0.35rem;
-        }
+        .std-score-value { font-size: 1.75rem; font-weight: 800; margin: 0.25rem 0; color: var(--color-text); }
+        .std-score-grade { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; margin-bottom: 0.35rem; }
         .grade-A { background: #d1fae5; color: #065f46; }
         .grade-B { background: #dbeafe; color: #1e40af; }
         .grade-C { background: #fef3c7; color: #92400e; }
         .grade-D { background: #ffedd5; color: #9a3412; }
         .grade-F { background: #fee2e2; color: #991b1b; }
-        .std-score-details {
-            font-size: 0.8rem;
-            color: var(--color-muted, #64748b);
-            line-height: 1.4;
-        }
-
-        /* Toolbar / exports */
+        .std-score-details { font-size: 0.8rem; color: var(--color-muted); line-height: 1.4; }
+        
         .health-toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 1.25rem;
-            padding: 0.85rem 1rem;
-            background: var(--color-surface, #fff);
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 10px;
+            display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between;
+            margin-bottom: 1.25rem; padding: 0.85rem 1rem;
+            background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px;
         }
-        .health-toolbar .left,
-        .health-toolbar .right {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            align-items: center;
+        .health-toolbar .left, .health-toolbar .right { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+        .health-toolbar label { font-size: 0.8rem; color: var(--color-muted); font-weight: 600; }
+        .health-toolbar select, .filter-bar select, .filter-bar input {
+            padding: 0.4rem 0.6rem; border: 1px solid var(--color-border); border-radius: 6px; font-size: 0.85rem; background: #fff;
         }
-        .health-toolbar label {
-            font-size: 0.8rem;
-            color: var(--color-muted, #64748b);
-            font-weight: 600;
-        }
-        .health-toolbar select,
-        .filter-bar select,
-        .filter-bar input {
-            padding: 0.4rem 0.6rem;
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 6px;
-            font-size: 0.85rem;
-            background: #fff;
-        }
+        
+        .action-item { display: flex; gap: 0.85rem; padding: 1rem; border: 1px solid var(--color-border); border-radius: 10px; background: #fff; margin-bottom: 0.65rem; }
+        .action-priority { width: 2rem; height: 2rem; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.85rem; flex-shrink: 0; }
 
-        /* Top actions */
-        .action-item {
-            display: flex;
-            gap: 0.85rem;
-            padding: 1rem;
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 10px;
-            background: #fff;
-            margin-bottom: 0.65rem;
-        }
-        .action-priority {
-            width: 2rem;
-            height: 2rem;
-            border-radius: 50%;
-            color: #fff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 800;
-            font-size: 0.85rem;
-            flex-shrink: 0;
-        }
-
-        /* Badges */
-        .badge {
-            display: inline-block;
-            padding: 0.12rem 0.45rem;
-            border-radius: 999px;
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            margin-left: 0.25rem;
-            vertical-align: middle;
-        }
+        .badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 999px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; margin-left: 0.25rem; vertical-align: middle; }
         .badge-critical { background: #7f1d1d; color: #fff; }
         .badge-high { background: #fee2e2; color: #991b1b; }
         .badge-medium { background: #fef3c7; color: #92400e; }
         .badge-low { background: #e2e8f0; color: #475569; }
         .badge-info { background: #e2e8f0; color: #334155; }
         .badge-std { background: #dbeafe; color: #1e40af; }
+        
+        .recommendation-box { margin-top: 0.5rem; padding: 0.55rem 0.75rem; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 6px; font-size: 0.85rem; color: #92400e; }
+        
+        .filter-bar { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem 1rem; background: #f8fafc; border: 1px solid var(--color-border); border-radius: 8px; }
+        .filter-bar input[type="search"], .filter-bar input[type="text"] { min-width: 200px; flex: 1; }
 
-        .recommendation-box {
-            margin-top: 0.5rem;
-            padding: 0.55rem 0.75rem;
-            background: #fffbeb;
-            border: 1px solid #f59e0b;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            color: #92400e;
-        }
+        .category-section { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; padding: 1rem 1.15rem; margin-bottom: 1rem; }
+        .category-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 0.85rem; padding-bottom: 0.65rem; border-bottom: 1px solid var(--color-border); }
+        .category-header h3 { font-size: 1.05rem; margin: 0; }
+        .category-stats { font-size: 0.85rem; color: var(--color-muted); white-space: nowrap; }
 
-        /* Filters + detail */
-        .filter-bar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.65rem;
-            align-items: center;
-            margin-bottom: 1rem;
-            padding: 0.75rem 1rem;
-            background: #f8fafc;
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 8px;
-        }
-        .filter-bar input[type="search"],
-        .filter-bar input[type="text"] {
-            min-width: 200px;
-            flex: 1;
-        }
-
-        .category-section {
-            background: var(--color-surface, #fff);
-            border: 1px solid var(--color-border, #e2e8f0);
-            border-radius: 10px;
-            padding: 1rem 1.15rem;
-            margin-bottom: 1rem;
-        }
-        .category-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 1rem;
-            margin-bottom: 0.85rem;
-            padding-bottom: 0.65rem;
-            border-bottom: 1px solid var(--color-border, #e2e8f0);
-        }
-        .category-header h3 {
-            font-size: 1.05rem;
-            margin: 0;
-        }
-        .category-stats {
-            font-size: 0.85rem;
-            color: var(--color-muted, #64748b);
-            white-space: nowrap;
-        }
-
-        .check-item {
-            display: flex;
-            gap: 0.75rem;
-            padding: 0.85rem;
-            border-radius: 8px;
-            margin-bottom: 0.5rem;
-            border: 1px solid var(--color-border, #e2e8f0);
-            background: #f8fafc;
-        }
+        .check-item { display: flex; gap: 0.75rem; padding: 0.85rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--color-border); background: #f8fafc; }
         .check-item.pass { border-left: 4px solid #10b981; background: #f0fdf4; }
         .check-item.fail { border-left: 4px solid #dc2626; background: #fef2f2; }
-        .check-item.info,
-        .check-item.na { border-left: 4px solid #94a3b8; background: #f8fafc; }
+        .check-item.info, .check-item.na { border-left: 4px solid #94a3b8; background: #f8fafc; }
         .check-icon { font-size: 1.1rem; line-height: 1.4; }
         .check-content { flex: 1; min-width: 0; }
-        .check-title {
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 0.15rem;
-        }
+        .check-title { font-weight: 600; margin-bottom: 0.25rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem; }
 
-        .section-title {
-            font-size: 1.15rem;
-            margin: 1.25rem 0 0.75rem;
-            color: var(--color-text, #1e293b);
+        .section-title { font-size: 1.15rem; margin: 1.25rem 0 0.75rem; color: var(--color-text); }
+
+        /* AI Narrative Card Styles */
+        #aiNarrativeSection {
+            background: linear-gradient(135deg, #ffffff, #f5f9ff);
+            border: 1px solid var(--color-accent);
+            border-left: 6px solid var(--color-accent);
         }
+        #aiNarrativeBody h3 { margin: 1rem 0 0.4rem; color: var(--color-primary); font-size: 1.1rem; }
+        #aiNarrativeBody strong { color: var(--color-primary-dark); }
     </style>
+
+    <!-- Activity Inspector Drawer (Global) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='activity_inspector.css') }}">
+    <script defer src="{{ url_for('static', filename='activity_inspector.js') }}"></script>
+
+    <!-- Auth Widget (Auto-injects login/user menu into header) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth_widget.css') }}">
+    <script src="{{ url_for('static', filename='auth_widget.js') }}"></script>
 </head>
 <body>
     <header class="app-header">
         <div class="header-content">
             <div class="logo-section">
                 {% if config.use_logo_image %}
-                    <img src="{{ url_for('static', filename=config.logo_path) }}"
-                         alt="Logo" style="height: 45px;">
+                    <img src="{{ url_for('static', filename=config.logo_path) }}" alt="Logo" style="height: 45px;">
                 {% else %}
                     <span class="logo-icon">🏥</span>
                 {% endif %}
@@ -346,6 +157,7 @@
                 <a href="/" class="btn btn-secondary">📊 Dashboard</a>
                 <a href="/gantt" class="btn btn-secondary">📅 Gantt</a>
                 <a href="/comparison" class="btn btn-secondary">🔄 Compare</a>
+                <a href="/trends" class="btn btn-secondary">📈 Trends</a>
                 <a href="/evm" class="btn btn-secondary">📈 EVM</a>
                 <a href="/health" class="btn btn-secondary" aria-current="page">🏥 Health</a>
             </div>
@@ -353,16 +165,13 @@
     </header>
 
     <main class="app-main">
-        <!-- Loading / error (health.js replaces innerHTML on error) -->
         <div id="loadingMessage" class="loading-screen" style="display:flex;">
             <div class="spinner"></div>
             <p>Loading health analytics…</p>
         </div>
 
-        <!-- Main dashboard -->
         <div id="healthContent" style="display:none;">
 
-            <!-- Standard selector -->
             <div class="std-selector" role="tablist" aria-label="Health standard">
                 <button type="button" class="std-select-btn active" data-std="all">All Standards</button>
                 <button type="button" class="std-select-btn" data-std="DCMA">DCMA</button>
@@ -373,7 +182,6 @@
                 <button type="button" class="std-select-btn" data-std="Industry">Industry</button>
             </div>
 
-            <!-- Hero score + KPIs -->
             <div class="health-hero">
                 <div class="score-ring">
                     <div class="big" id="overallScore">--</div>
@@ -384,26 +192,29 @@
                     </div>
                 </div>
                 <div class="hero-stats">
-                    <div class="hero-stat">
-                        <div class="val" id="totalChecks">--</div>
-                        <div class="lbl">Total checks</div>
-                    </div>
-                    <div class="hero-stat">
-                        <div class="val" id="passedChecks">--</div>
-                        <div class="lbl">Passed</div>
-                    </div>
-                    <div class="hero-stat">
-                        <div class="val" id="failedChecks">--</div>
-                        <div class="lbl">Failed</div>
-                    </div>
-                    <div class="hero-stat danger">
-                        <div class="val" id="criticalFailures">--</div>
-                        <div class="lbl">Critical fails</div>
-                    </div>
+                    <div class="hero-stat"><div class="val" id="totalChecks">--</div><div class="lbl">Total checks</div></div>
+                    <div class="hero-stat"><div class="val" id="passedChecks">--</div><div class="lbl">Passed</div></div>
+                    <div class="hero-stat"><div class="val" id="failedChecks">--</div><div class="lbl">Failed</div></div>
+                    <div class="hero-stat danger"><div class="val" id="criticalFailures">--</div><div class="lbl">Critical fails</div></div>
                 </div>
             </div>
 
-            <!-- Export toolbar -->
+            <!-- ═══════════════════════════════════════ -->
+            <!-- 🤖 AI EXECUTIVE NARRATIVE BRIEFING -->
+            <!-- ═══════════════════════════════════════ -->
+            <div class="dcma-section" id="aiNarrativeSection" style="margin-bottom: 1.75rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <h2 style="margin: 0;">🤖 AI Executive Narrative Briefing</h2>
+                    <button type="button" class="btn btn-primary" onclick="fetchAINarrative(true)">
+                        🔄 Generate Briefing
+                    </button>
+                </div>
+                <div id="aiNarrativeMethod" style="font-size: 0.8rem; color: var(--color-muted); margin-bottom: 0.75rem;"></div>
+                <div id="aiNarrativeBody" style="font-size: 0.95rem; line-height: 1.6; color: var(--color-text);">
+                    <p style="color: var(--color-muted);">💡 Click <strong>"Generate Briefing"</strong> to synthesize health, EVM, and delay metrics into a professional executive narrative report.</p>
+                </div>
+            </div>
+
             <div class="health-toolbar">
                 <div class="left">
                     <label for="excelSeverityFilter">Export severity</label>
@@ -421,23 +232,16 @@
                 </div>
             </div>
 
-            <!-- Per-standard scores (clickable) -->
             <h2 class="section-title">Standards scores</h2>
-            <p style="font-size:0.85rem;color:#64748b;margin:-0.35rem 0 0.75rem;">
-                Click a card to drill into that standard only.
-            </p>
+            <p style="font-size:0.85rem;color:#64748b;margin:-0.35rem 0 0.75rem;">Click a card to drill into that standard only.</p>
             <div id="scoreGrid" class="score-grid"></div>
 
-            <!-- Top priority actions -->
             <div id="topActionsSection" style="display:none;">
                 <h2 class="section-title">Top priority actions</h2>
-                <p style="font-size:0.85rem;color:#64748b;margin:-0.35rem 0 0.75rem;">
-                    Filtered by export severity. Expand rows to see affected activities.
-                </p>
+                <p style="font-size:0.85rem;color:#64748b;margin:-0.35rem 0 0.75rem;">Filtered by export severity. Expand rows to see affected activities.</p>
                 <div id="topActionsList"></div>
             </div>
 
-            <!-- Detailed results -->
             <h2 class="section-title">Detailed check results</h2>
             <div class="filter-bar">
                 <label for="filterStatus">Status</label>
@@ -448,7 +252,6 @@
                     <option value="info">Info</option>
                     <option value="na">N/A</option>
                 </select>
-
                 <label for="filterSeverity">Severity</label>
                 <select id="filterSeverity">
                     <option value="all">All</option>
@@ -456,13 +259,10 @@
                     <option value="high">Critical + High</option>
                     <option value="medium">Crit + High + Med</option>
                 </select>
-
                 <label for="filterSearch">Search</label>
                 <input type="search" id="filterSearch" placeholder="Check ID or name…" autocomplete="off">
-
                 <button type="button" class="btn btn-outline" onclick="applyFilter()">Apply</button>
             </div>
-
             <div id="detailedResults"></div>
         </div>
     </main>

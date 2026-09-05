@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account | {{ config.app_title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            display: flex; align-items: center; justify-content: center;
+            min-height: 100vh; background: linear-gradient(135deg, #059669, #065f46);
+            margin: 0; font-family: -apple-system, sans-serif;
+        }
+        .auth-card {
+            background: #fff; border-radius: 16px; padding: 3rem 2.5rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 100%; max-width: 480px;
+        }
+        .auth-card h1 { color: #065f46; margin: 0 0 0.5rem; font-size: 1.75rem; }
+        .auth-card .subtitle { color: #64748b; margin-bottom: 2rem; font-size: 0.9rem; }
+        .form-group { margin-bottom: 1.1rem; }
+        .form-group label { display: block; margin-bottom: 0.4rem; font-weight: 600; font-size: 0.85rem; color: #334155; }
+        .form-group input {
+            width: 100%; padding: 0.75rem; border: 1px solid #cbd5e1;
+            border-radius: 8px; font-size: 0.95rem; box-sizing: border-box;
+        }
+        .form-group input:focus { outline: none; border-color: #10b981; }
+        .form-hint { font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem; }
+        .btn-primary-full {
+            width: 100%; background: #10b981; color: #fff; border: none;
+            padding: 0.85rem; border-radius: 8px; font-size: 1rem; font-weight: 600;
+            cursor: pointer; margin-top: 0.5rem;
+        }
+        .btn-primary-full:hover { background: #059669; }
+        .btn-primary-full:disabled { opacity: 0.6; cursor: not-allowed; }
+        .auth-footer { text-align: center; margin-top: 1.5rem; font-size: 0.85rem; color: #64748b; }
+        .auth-footer a { color: #10b981; text-decoration: none; font-weight: 600; }
+        .error-msg {
+            background: #fef2f2; border: 1px solid #dc2626; color: #991b1b;
+            padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-card">
+        <h1>🚀 Get Started</h1>
+        <p class="subtitle">Create your organization and admin account.</p>
+
+        <div id="errorBox" class="error-msg" style="display:none;"></div>
+
+        <form id="registerForm">
+            <div class="form-group">
+                <label>Organization Name</label>
+                <input type="text" id="orgName" required placeholder="Acme Construction Inc.">
+                <div class="form-hint">This is your company/team name. You can invite team members later.</div>
+            </div>
+            <div class="form-group">
+                <label>Your Full Name</label>
+                <input type="text" id="fullName" required placeholder="Jane Smith">
+            </div>
+            <div class="form-group">
+                <label>Work Email</label>
+                <input type="email" id="email" required autocomplete="email" placeholder="[email protected]">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="password" required minlength="8" autocomplete="new-password">
+                <div class="form-hint">Minimum 8 characters</div>
+            </div>
+            <button type="submit" class="btn-primary-full" id="submitBtn">Create Organization</button>
+        </form>
+
+        <div class="auth-footer">
+            Already have an account? <a href="/login">Sign in</a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('registerForm');
+        const errorBox = document.getElementById('errorBox');
+        const btn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorBox.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        org_name: document.getElementById('orgName').value,
+                        full_name: document.getElementById('fullName').value,
+                        email: document.getElementById('email').value,
+                        password: document.getElementById('password').value,
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    throw new Error(data.error || 'Registration failed');
+                }
+                window.location.href = '/';
+            } catch (err) {
+                errorBox.textContent = '❌ ' + err.message;
+                errorBox.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Create Organization';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -178,8 +178,8 @@ function setupEventListeners() {
 async function uploadFile(file) {
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith('.xer')) {
-        alert('❌ Please upload a .xer file');
+    if (!file.name.toLowerCase().match(/\.(xer|xml)$/i)) {
+        alert('❌ Please upload a .xer or .xml or .xml file');
         return;
     }
 
@@ -210,7 +210,7 @@ async function uploadFile(file) {
 
 async function loadSample() {
     console.log('📄 Loading sample file...');
-    showLoading('Loading sample XER file...');
+    showLoading('Loading sample Schedule file...');
     try {
         const data = await safeFetchJSON('/api/load-sample');
         showDashboard(data);
@@ -544,7 +544,7 @@ function renderActivitiesTable(activities) {
             if (act.critical) tr.className = 'critical-row';
             const sc = statusClass(act.status);
             tr.innerHTML =
-                '<td><strong>' + esc(act.code) + '</strong></td>' +
+                '<td><strong data-activity-code="' + esc(act.code) + '">' + esc(act.code) + '</strong></td>' +
                 '<td>' + esc(act.name) + '</td>' +
                 '<td>' + esc(act.wbs) + '</td>' +
                 '<td>' + esc(act.type) + '</td>' +
@@ -612,7 +612,7 @@ function renderCriticalTable(criticals) {
             tr.className = 'critical-row';
             const sc = statusClass(act.status);
             tr.innerHTML =
-                '<td><strong>' + esc(act.code) + '</strong></td>' +
+                '<td><strong data-activity-code="' + esc(act.code) + '">' + esc(act.code) + '</strong></td>' +
                 '<td>' + esc(act.name) + '</td>' +
                 '<td>' + esc(act.wbs) + '</td>' +
                 '<td>' + esc(act.duration) + 'd</td>' +
