@@ -2,6 +2,13 @@
 XER COMPARISON ENGINE
 =====================
 Compares two XER files (e.g., Baseline vs Current) and identifies all differences.
+
+USE CASES:
+- Baseline vs Current schedule comparison
+- Update-to-update schedule variance analysis
+- Forensic delay analysis (AACE RP 29R-03)
+- Relationship & logic change tracking
+- Slippage / acceleration identification
 """
 
 from parser import XERParser
@@ -13,13 +20,20 @@ logger = logging.getLogger(__name__)
 
 
 class ScheduleComparator:
+    """
+    Compares two schedules and identifies differences across activities,
+    dates, duration, float, progress, critical path, and relationships.
+    """
+
     def __init__(self):
         self.baseline_engine = None
         self.current_engine = None
         self.comparison_results = {}
 
     def load_baseline(self, file_path_or_stream):
+        """Load the baseline (original) schedule from path or stream."""
         logger.info(f"📊 Loading Baseline: {file_path_or_stream}")
+        
         parser = XERParser()
         tables = parser.parse(file_path_or_stream)
         
@@ -29,9 +43,13 @@ class ScheduleComparator:
         self.baseline_engine = ScheduleEngine()
         self.baseline_engine.load_data(tables)
         self.baseline_engine.analyze()
+        
+        logger.info(f"  ✅ Baseline loaded: {len(self.baseline_engine.activities)} activities")
 
     def load_current(self, file_path_or_stream):
+        """Load the current (updated) schedule from path or stream."""
         logger.info(f"📊 Loading Current: {file_path_or_stream}")
+        
         parser = XERParser()
         tables = parser.parse(file_path_or_stream)
         
@@ -41,13 +59,23 @@ class ScheduleComparator:
         self.current_engine = ScheduleEngine()
         self.current_engine.load_data(tables)
         self.current_engine.analyze()
+        
+        logger.info(f"  ✅ Current loaded: {len(self.current_engine.activities)} activities")
 
     def compare(self):
+        """
+        Run full schedule comparison.
+        
+        RETURNS:
+            Dictionary with summary, added, deleted, changed, critical shifts,
+            and relationship modifications.
+        """
         if not self.baseline_engine or not self.current_engine:
             raise Exception("Both baseline and current schedules must be loaded first.")
         
         logger.info("🔍 Comparing schedules...")
         
+        # Match activities by task_code
         baseline_acts = {
             a.get('task_code', ''): a 
             for a in self.baseline_engine.activities
@@ -105,11 +133,22 @@ class ScheduleComparator:
             'current_info': self._get_schedule_info(self.current_engine),
         }
         
+        logger.info(
+            f"  ✅ Comparison complete: {len(added)} Added, {len(deleted)} Deleted, "
+            f"{len(changed)} Changed, {unchanged_count} Unchanged"
+        )
+        
         return self.comparison_results
 
+    # ═══════════════════════════════════════════════════════
+    # FIELD CHANGE DETECTION
+    # ═══════════════════════════════════════════════════════
+
     def _detect_changes(self, baseline, current):
+        """Detect field-level variances for matching activities."""
         changes = []
         
+        # 1. Duration Change
         base_dur = float(baseline.get('original_duration_days', 0) or 0)
         curr_dur = float(current.get('original_duration_days', 0) or 0)
         dur_diff = curr_dur - base_dur
@@ -123,6 +162,7 @@ class ScheduleComparator:
                 'severity': 'high' if abs(dur_diff) > 5 else 'medium'
             })
         
+        # 2. Start Date Change (Prioritizes Actuals)
         base_start = self._get_best_start_date(baseline)
         curr_start = self._get_best_start_date(current)
         if base_start and curr_start and base_start != curr_start:
@@ -137,6 +177,7 @@ class ScheduleComparator:
                     'severity': 'high' if abs(delta_days) > 7 else 'medium'
                 })
         
+        # 3. Finish Date Change (Prioritizes Actuals)
         base_end = self._get_best_finish_date(baseline)
         curr_end = self._get_best_finish_date(current)
         if base_end and curr_end and base_end != curr_end:
@@ -151,6 +192,7 @@ class ScheduleComparator:
                     'severity': 'high' if abs(delta_days) > 7 else 'medium'
                 })
         
+        # 4. Total Float Change
         base_float = float(baseline.get('total_float_days', 0) or 0)
         curr_float = float(current.get('total_float_days', 0) or 0)
         float_diff = curr_float - base_float
@@ -164,6 +206,7 @@ class ScheduleComparator:
                 'severity': 'high' if curr_float < 0 and base_float >= 0 else 'medium'
             })
         
+        # 5. Status Change
         base_status = baseline.get('status_text', '')
         curr_status = current.get('status_text', '')
         if base_status != curr_status:
@@ -176,6 +219,7 @@ class ScheduleComparator:
                 'severity': 'low'
             })
         
+        # 6. Progress Change
         base_prog = self._to_float(baseline.get('phys_complete_pct', '0'))
         curr_prog = self._to_float(current.get('phys_complete_pct', '0'))
         prog_diff = curr_prog - base_prog
@@ -191,7 +235,15 @@ class ScheduleComparator:
         
         return changes
 
+    # ═══════════════════════════════════════════════════════
+    # RELATIONSHIP & LOGIC VARIANCE
+    # ═══════════════════════════════════════════════════════
+
     def _compare_relationships(self):
+        """
+        Compare network relationships between schedules by (pred_code -> succ_code).
+        Identifies added, deleted, and modified logic ties.
+        """
         base_rels = {
             f"{r.get('pred_code')}->{r.get('succ_code')}": r
             for r in self.baseline_engine.relationships
@@ -236,7 +288,12 @@ class ScheduleComparator:
             'modified_details': modified_logic
         }
 
+    # ═══════════════════════════════════════════════════════
+    # CRITICAL PATH SHIFTS
+    # ═══════════════════════════════════════════════════════
+
     def _analyze_critical_path_changes(self, baseline_acts, current_acts, common):
+        """Find activities that moved onto or off the critical path."""
         newly_critical = []
         no_longer_critical = []
         
@@ -264,7 +321,15 @@ class ScheduleComparator:
             'no_longer_critical': no_longer_critical,
         }
 
+    # ═══════════════════════════════════════════════════════
+    # SUMMARY METRICS
+    # ═══════════════════════════════════════════════════════
+
     def _calculate_summary(self, added, deleted, changed, unchanged):
+        """
+        Calculate summary counts.
+        FIXED: Slipped / Improved relies on raw integer delta_days, NOT string matching.
+        """
         slipped = 0
         improved = 0
         
@@ -289,7 +354,12 @@ class ScheduleComparator:
             'improved_count': improved,
         }
 
+    # ═══════════════════════════════════════════════════════
+    # HELPERS
+    # ═══════════════════════════════════════════════════════
+
     def _format_activity(self, act, source):
+        """Format an activity for display in comparison tables."""
         start = self._get_best_start_date(act)
         finish = self._get_best_finish_date(act)
         return {
@@ -306,16 +376,19 @@ class ScheduleComparator:
         }
 
     def _get_best_start_date(self, act):
+        """Returns actual start if present; otherwise early start or target start."""
         return act.get('act_start_date_parsed') or \
                act.get('early_start_date_parsed') or \
                act.get('target_start_date_parsed')
 
     def _get_best_finish_date(self, act):
+        """Returns actual finish if present; otherwise early finish or target finish."""
         return act.get('act_end_date_parsed') or \
                act.get('early_end_date_parsed') or \
                act.get('target_end_date_parsed')
 
     def _get_schedule_info(self, engine):
+        """Get project info dictionary."""
         info = engine._get_project_info() if hasattr(engine, '_get_project_info') else {}
         return {
             'name': info.get('name', 'Unknown'),

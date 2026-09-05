@@ -1,0 +1,10 @@
+# P6 Schedule Analyzer Dependencies
+# Pinned version ranges for production stability and reproducible deployments
+
+Flask>=3.0.0,<3.1.0
+flask-cors>=4.0.0,<5.0.0
+Werkzeug>=3.0.0,<3.1.0
+openpyxl>=3.1.2,<3.2.0
+pandas>=2.1.0,<2.3.0
+gunicorn>=21.2.0,<22.0.0
+reportlab>=4.0.0,<4.2.0

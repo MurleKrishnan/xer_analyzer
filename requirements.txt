@@ -1,6 +1,3 @@
-# P6 Schedule Analyzer Dependencies
-# Pinned version ranges for production stability and reproducible deployments
-
 Flask>=3.0.0,<3.1.0
 flask-cors>=4.0.0,<5.0.0
 Werkzeug>=3.0.0,<3.1.0

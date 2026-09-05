@@ -2,18 +2,22 @@
 COMPREHENSIVE SCHEDULE HEALTH ANALYTICS ENGINE
 ================================================
 622+ discrete checks across 6 major standards:
-- DCMA 14-Point Assessment
-- DOE PM-30 Order Requirements
-- NASA NPR 7120.5 & PM Handbook
-- GAO Schedule Assessment Guide
-- AACE International RP 29R-03, 32R-04
-- Industry Best Practices
+
+- DCMA 14-Point Assessment              (28 checks)
+- DOE PM-30 Order Requirements          (95 checks)
+- NASA NPR 7120.5 & PM Handbook         (112 checks)
+- GAO Schedule Assessment Guide         (145 checks)
+- AACE International RP 29R-03, 32R-04  (128 checks)
+- Industry Best Practices               (114 checks)
+
+Orchestrates execution, caching, and score compilation.
 """
 
 from collections import defaultdict, Counter
 from datetime import datetime
 import logging
 
+# Move imports to top level to avoid overhead on every API call
 from health_standards.dcma_checks import DCMAChecks
 from health_standards.doe_checks import DOEChecks
 from health_standards.nasa_checks import NASAChecks
@@ -36,9 +40,12 @@ class AdvancedHealthEngine:
         self.projects = engine.projects
         self.wbs_nodes = engine.wbs_nodes
         
+        # ─── SHARED FILTERED LISTS ───
+        # WBS summaries excluded from all logic
         self.real_including_loe = [
             a for a in self.activities if a.get('task_type') != 'TT_WBS'
         ]
+        # Standard filter: excludes both WBS and LOE
         self.real_activities = [
             a for a in self.real_including_loe if a.get('task_type') != 'TT_LOE'
         ]
@@ -63,12 +70,18 @@ class AdvancedHealthEngine:
         self.results = {}
 
     def _get_data_date(self):
+        """Get project data date safely."""
         if not self.projects:
             return None
         date_str = self.projects[0].get('last_recalc_date', '')
         return self.engine._parse_date(date_str)
 
     def run_all_checks(self, selected_standard='all', force=False):
+        """
+        Run all checks or filter by specific standard, using cache when available.
+        """
+        # ─── CACHE CHECK ───
+        # Cache is stored on the underlying ScheduleEngine so it persists across API requests
         if not hasattr(self.engine, 'health_cache'):
             self.engine.health_cache = {}
             
@@ -101,22 +114,30 @@ class AdvancedHealthEngine:
             self.results[std_name] = checker.run_checks()
         
         report = self._compile_full_report(selected_standard)
+        
+        # Save to cache
         self.engine.health_cache[cache_key] = report
         return report
 
     def _compile_full_report(self, selected_standard):
+        """Build the complete report, enforce schema, and calculate scores."""
+        
+        # 1. Enforce Status/Passed Contract to prevent UI drift
         for std_data in self.results.values():
             for category in std_data.get('categories', []):
                 for check in category.get('checks', []):
+                    # Ensure passed boolean perfectly matches status string
                     if check.get('status') == 'fail':
                         check['passed'] = False
                     elif check.get('status') == 'pass':
                         check['passed'] = True
 
+        # 2. Score each standard
         standard_scores = {}
         for std_name, std_data in self.results.items():
             standard_scores[std_name] = self._calculate_standard_score(std_data)
         
+        # 3. Overall metrics (Weighted approach)
         total_checks = 0
         total_passed = 0
         total_failed = 0
@@ -150,6 +171,7 @@ class AdvancedHealthEngine:
         overall_score = (earned_points / possible_points * 100) if possible_points > 0 else 100.0
         overall_score = round(overall_score, 1)
         
+        # 4. Top actions (Prioritized failed checks - get all for PDF/Excel)
         all_actions = self._get_top_actions(limit=None)
         
         return {
@@ -163,12 +185,13 @@ class AdvancedHealthEngine:
             'pass_rate': round(total_passed / total_checks * 100, 1) if total_checks else 0,
             'standard_scores': standard_scores,
             'standards': self.results,
-            'top_actions': all_actions,
+            'top_actions': all_actions,  # UI slices to 15, Exports use all
             'project_info': self._get_project_info(),
             'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         }
 
     def _calculate_standard_score(self, std_data):
+        """Calculate weighted score and letter grade for a specific standard."""
         total = 0
         passed = 0
         critical_fail = 0
@@ -199,6 +222,7 @@ class AdvancedHealthEngine:
         score = (earned / possible * 100) if possible > 0 else 100.0
         score = round(score, 1)
         
+        # Determine grade
         if score >= 90:
             grade, color = 'A', 'green'
         elif score >= 80:
@@ -224,6 +248,7 @@ class AdvancedHealthEngine:
         }
 
     def _get_top_actions(self, limit=None):
+        """Get prioritized list of failed checks needing action."""
         all_failed = []
 
         for std_name, std_data in self.results.items():
@@ -240,6 +265,7 @@ class AdvancedHealthEngine:
                     }.get(check.get('severity', 'low'), 5)
 
                     count = check.get('count', 0) or 0
+                    # Higher severity rules, then highest impact count
                     priority = severity_weight + min(count, 100)
 
                     all_failed.append({
@@ -266,6 +292,7 @@ class AdvancedHealthEngine:
         return all_failed
 
     def _get_project_info(self):
+        """Get project header info."""
         if not self.projects:
             return {}
         proj = self.projects[0]

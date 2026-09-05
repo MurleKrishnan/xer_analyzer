@@ -1,6 +1,10 @@
 """
 DCMA 14-POINT ASSESSMENT (Enhanced)
 ====================================
+Based on:
+- DCMA 14-Point Schedule Assessment
+- DCMA 14-Point Analysis Guide (2012 & updates)
+- Plus: Open Ends, FS+Lag, and refined CP continuity checks
 """
 
 from health_standards.base_checker import BaseChecker
@@ -10,6 +14,7 @@ class DCMAChecks(BaseChecker):
     """DCMA 14-Point comprehensive check suite."""
 
     def run_checks(self):
+        """Run all DCMA checks organized by category."""
         return {
             'name': 'DCMA 14-Point Assessment',
             'description': 'Defense Contract Management Agency standard schedule health metrics with detailed sub-metrics',
@@ -23,13 +28,18 @@ class DCMAChecks(BaseChecker):
             ]
         }
 
+    # ═══════════════════════════════════════════════════════
+    # 1. LOGIC CHECKS (DCMA-01, DCMA-02, Open Ends)
+    # ═══════════════════════════════════════════════════════
     def _logic_checks(self):
         checks = []
         total = len(self.incomplete) or 1
         
+        # Uses shared helpers from base_checker (milestone-aware, incomplete-only)
         open_start = self.open_start_activities()
         open_end = self.open_end_activities()
         
+        # ─── DCMA-01: Missing Predecessors ───
         checks.append(self.make_check(
             'DCMA-01', 'Missing Predecessors',
             'Every activity (except start milestones) should have a predecessor',
@@ -38,6 +48,7 @@ class DCMAChecks(BaseChecker):
             open_start
         ))
         
+        # DCMA-01a: Missing Preds on Critical Path
         crit_incomplete = [a for a in self.incomplete if a.get('is_critical')]
         crit_missing_pred = [a for a in open_start if a.get('is_critical')]
         checks.append(self.make_check(
@@ -48,6 +59,7 @@ class DCMAChecks(BaseChecker):
             crit_missing_pred
         ))
         
+        # DCMA-02: Missing Successors
         checks.append(self.make_check(
             'DCMA-02', 'Missing Successors',
             'Every activity (except finish milestones) should have a successor',
@@ -56,6 +68,7 @@ class DCMAChecks(BaseChecker):
             open_end
         ))
         
+        # DCMA-02a: Critical Path Missing Successors
         crit_missing_succ = [a for a in open_end if a.get('is_critical')]
         checks.append(self.make_check(
             'DCMA-02a', 'Critical Path Missing Successors',
@@ -65,6 +78,7 @@ class DCMAChecks(BaseChecker):
             crit_missing_succ
         ))
         
+        # DCMA-OPEN-01: Open Start Activities (explicit extension)
         checks.append(self.make_check(
             'DCMA-OPEN-01', 'Open Start Activities',
             'Non-milestone activities without predecessors',
@@ -73,6 +87,7 @@ class DCMAChecks(BaseChecker):
             open_start
         ))
         
+        # DCMA-OPEN-02: Open End Activities
         checks.append(self.make_check(
             'DCMA-OPEN-02', 'Open End Activities',
             'Non-milestone activities without successors',
@@ -83,11 +98,17 @@ class DCMAChecks(BaseChecker):
         
         return {'name': 'Logic Checks', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 2. LAG / LEAD CHECKS (DCMA-03, 04, 05, FS+Lag)
+    # ═══════════════════════════════════════════════════════
     def _lag_lead_checks(self):
         checks = []
+        
+        # Only assess ACTIVE (non-completed successor) relationships
         active_rels = self.active_relationships()
         rel_total = len(active_rels) or 1
         
+        # DCMA-03: Leads (Negative Lag)
         leads = [r for r in active_rels if r.get('lag_days', 0) < 0]
         checks.append(self.make_check(
             'DCMA-03', 'Leads (Negative Lag)',
@@ -97,6 +118,7 @@ class DCMAChecks(BaseChecker):
             leads
         ))
         
+        # DCMA-03a: Large Leads (>5 days)
         large_leads = [r for r in leads if r.get('lag_days', 0) < -5]
         checks.append(self.make_check(
             'DCMA-03a', 'Large Leads (>5 days)',
@@ -106,6 +128,7 @@ class DCMAChecks(BaseChecker):
             large_leads
         ))
         
+        # DCMA-04: Lags
         lags = [r for r in active_rels if r.get('lag_days', 0) > 0]
         checks.append(self.make_check(
             'DCMA-04', 'Excessive Lags',
@@ -115,6 +138,7 @@ class DCMAChecks(BaseChecker):
             lags
         ))
         
+        # DCMA-04a: Large Lags (>10 days)
         large_lags = [r for r in lags if r.get('lag_days', 0) > 10]
         checks.append(self.make_check(
             'DCMA-04a', 'Large Lags (>10 days)',
@@ -124,6 +148,7 @@ class DCMAChecks(BaseChecker):
             large_lags
         ))
         
+        # DCMA-05: Non-FS Relationship Types
         non_fs = [r for r in active_rels if r.get('pred_type') != 'PR_FS']
         checks.append(self.make_check(
             'DCMA-05', 'Non-FS Relationships',
@@ -133,6 +158,7 @@ class DCMAChecks(BaseChecker):
             non_fs
         ))
         
+        # DCMA-05a: SF Relationships (should be near zero)
         sf_rels = [r for r in active_rels if r.get('pred_type') == 'PR_SF']
         checks.append(self.make_check(
             'DCMA-05a', 'Start-to-Finish Relationships',
@@ -142,6 +168,7 @@ class DCMAChecks(BaseChecker):
             sf_rels
         ))
         
+        # DCMA-FS-LAG: FS with positive lag (extension)
         fs_lag_rels = self.fs_with_lag()
         checks.append(self.make_check(
             'DCMA-FS-LAG', 'FS Relationships with Lag',
@@ -153,10 +180,14 @@ class DCMAChecks(BaseChecker):
         
         return {'name': 'Lag/Lead Analysis', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 3. CONSTRAINT CHECKS (DCMA-06)
+    # ═══════════════════════════════════════════════════════
     def _constraint_checks(self):
         checks = []
         total = len(self.incomplete) or 1
         
+        # DCMA-06: Hard Constraints (excludes ALAP - tracked separately)
         constrained = [a for a in self.incomplete if self.has_hard_constraint(a)]
         checks.append(self.make_check(
             'DCMA-06', 'Hard Constraints',
@@ -166,6 +197,7 @@ class DCMAChecks(BaseChecker):
             constrained
         ))
         
+        # DCMA-06a: Mandatory Start
         mand_start = [a for a in self.incomplete 
                       if a.get('cstr_type') == 'CS_MANDSTART' or a.get('cstr_type2') == 'CS_MANDSTART']
         checks.append(self.make_check(
@@ -176,6 +208,7 @@ class DCMAChecks(BaseChecker):
             mand_start
         ))
         
+        # DCMA-06b: Mandatory Finish
         mand_fin = [a for a in self.incomplete 
                     if a.get('cstr_type') == 'CS_MANDFIN' or a.get('cstr_type2') == 'CS_MANDFIN']
         checks.append(self.make_check(
@@ -186,6 +219,7 @@ class DCMAChecks(BaseChecker):
             mand_fin
         ))
         
+        # DCMA-06c: Must Start On
         must_start = [a for a in self.incomplete 
                       if a.get('cstr_type') == 'CS_MSO' or a.get('cstr_type2') == 'CS_MSO']
         checks.append(self.make_check(
@@ -196,6 +230,7 @@ class DCMAChecks(BaseChecker):
             must_start
         ))
         
+        # DCMA-06d: Must Finish On (corrected code: CS_MEO not CS_MFO)
         must_fin = [a for a in self.incomplete 
                     if a.get('cstr_type') == 'CS_MEO' or a.get('cstr_type2') == 'CS_MEO']
         checks.append(self.make_check(
@@ -206,6 +241,7 @@ class DCMAChecks(BaseChecker):
             must_fin
         ))
         
+        # DCMA-06e: ALAP (tracked separately from hard constraints)
         alap = [a for a in self.incomplete 
                 if a.get('cstr_type') == 'CS_ALAP' or a.get('cstr_type2') == 'CS_ALAP']
         checks.append(self.make_check(
@@ -218,11 +254,15 @@ class DCMAChecks(BaseChecker):
         
         return {'name': 'Constraint Analysis', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 4. FLOAT / DURATION CHECKS (DCMA-07, 08, 09)
+    # ═══════════════════════════════════════════════════════
     def _float_duration_checks(self):
         checks = []
         total = len(self.incomplete) or 1
         milestones = {'TT_Mile', 'TT_FinMile'}
         
+        # DCMA-07: High Float (>44 days)
         high_float = [a for a in self.incomplete if a.get('total_float_days', 0) > 44]
         checks.append(self.make_check(
             'DCMA-07', 'High Float (>44 days)',
@@ -232,6 +272,7 @@ class DCMAChecks(BaseChecker):
             high_float
         ))
         
+        # DCMA-07a: Very High Float (>132 days)
         very_high_float = [a for a in self.incomplete if a.get('total_float_days', 0) > 132]
         checks.append(self.make_check(
             'DCMA-07a', 'Very High Float (>132 days)',
@@ -241,6 +282,7 @@ class DCMAChecks(BaseChecker):
             very_high_float
         ))
         
+        # DCMA-08: Negative Float
         neg_float = [a for a in self.incomplete if a.get('total_float_days', 0) < 0]
         checks.append(self.make_check(
             'DCMA-08', 'Negative Float',
@@ -250,6 +292,7 @@ class DCMAChecks(BaseChecker):
             neg_float
         ))
         
+        # DCMA-08a: Severe Negative Float (<-10 days)
         severe_neg = [a for a in self.incomplete if a.get('total_float_days', 0) < -10]
         checks.append(self.make_check(
             'DCMA-08a', 'Severe Negative Float (<-10 days)',
@@ -259,6 +302,7 @@ class DCMAChecks(BaseChecker):
             severe_neg
         ))
         
+        # DCMA-09: High Duration (>44 days)
         high_dur = [a for a in self.incomplete 
                    if a.get('original_duration_days', 0) > 44 
                    and a.get('task_type') not in milestones]
@@ -270,6 +314,7 @@ class DCMAChecks(BaseChecker):
             high_dur
         ))
         
+        # DCMA-09a: Very High Duration (>88 days)
         very_high_dur = [a for a in self.incomplete 
                         if a.get('original_duration_days', 0) > 88
                         and a.get('task_type') not in milestones]
@@ -283,10 +328,14 @@ class DCMAChecks(BaseChecker):
         
         return {'name': 'Float & Duration Analysis', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 5. DATE / PROGRESS VALIDITY (DCMA-10)
+    # ═══════════════════════════════════════════════════════
     def _date_progress_checks(self):
         checks = []
         total = len(self.activities) or 1
         
+        # DCMA-10: Invalid Dates (Not Started with Actual Start)
         invalid = [a for a in self.activities
                   if a.get('status_code') == 'TK_NotStart' and a.get('act_start_date', '')]
         checks.append(self.make_check(
@@ -297,6 +346,7 @@ class DCMAChecks(BaseChecker):
             invalid
         ))
         
+        # DCMA-10a: Actual Finish After Data Date
         future_actuals = []
         if self.data_date:
             for a in self.activities:
@@ -311,6 +361,7 @@ class DCMAChecks(BaseChecker):
             future_actuals
         ))
         
+        # DCMA-10b: Actual Start After Data Date
         future_starts = []
         if self.data_date:
             for a in self.activities:
@@ -325,6 +376,7 @@ class DCMAChecks(BaseChecker):
             future_starts
         ))
         
+        # DCMA-10c: Actual Finish Before Actual Start
         reversed_dates = []
         for a in self.activities:
             s = a.get('act_start_date_parsed')
@@ -339,6 +391,7 @@ class DCMAChecks(BaseChecker):
             reversed_dates
         ))
         
+        # DCMA-10d: Complete Without Actual Finish
         complete_no_finish = [a for a in self.activities
                              if a.get('status_code') == 'TK_Complete' 
                              and not a.get('act_end_date', '')]
@@ -352,11 +405,15 @@ class DCMAChecks(BaseChecker):
         
         return {'name': 'Date Validity', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 6. RESOURCES & METRICS (DCMA-11, 12, 13, 14)
+    # ═══════════════════════════════════════════════════════
     def _resource_metric_checks(self):
         checks = []
         total = len(self.incomplete) or 1
         milestones = {'TT_Mile', 'TT_FinMile', 'TT_LOE'}
         
+        # DCMA-11: Missing Resources
         tasks_with_res = set(r.get('task_id') for r in self.resources)
         missing_res = [a for a in self.incomplete 
                       if a.get('task_id', '') not in tasks_with_res
@@ -369,6 +426,7 @@ class DCMAChecks(BaseChecker):
             missing_res
         ))
         
+        # DCMA-12: CPLI (Critical Path Length Index)
         cpli = self._calculate_cpli()
         checks.append(self.make_metric(
             'DCMA-12', 'CPLI (Critical Path Length Index)',
@@ -379,6 +437,7 @@ class DCMAChecks(BaseChecker):
             unit=''
         ))
         
+        # DCMA-13: BEI (Baseline Execution Index)
         bei = self._calculate_bei()
         checks.append(self.make_metric(
             'DCMA-13', 'BEI (Baseline Execution Index)',
@@ -389,6 +448,7 @@ class DCMAChecks(BaseChecker):
             unit=''
         ))
         
+        # DCMA-14: Critical Path Test (Continuity)
         cp_continuity = self._calculate_cp_continuity()
         checks.append(self.make_metric(
             'DCMA-14', 'Critical Path Test (Continuity)',
@@ -401,7 +461,14 @@ class DCMAChecks(BaseChecker):
         
         return {'name': 'Resources & Metrics', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # DCMA-12 CPLI CALCULATION
+    # ═══════════════════════════════════════════════════════
     def _calculate_cpli(self):
+        """
+        CPLI = Time Available / Length of Critical Path
+        Returns None (N/A) if data is insufficient.
+        """
         try:
             if not self.data_date or not self.projects:
                 return None
@@ -411,6 +478,7 @@ class DCMAChecks(BaseChecker):
             if not baseline_finish:
                 return None
             
+            # Critical path finish = latest EF among critical incomplete activities
             crit_incomplete = [a for a in self.incomplete if a.get('is_critical')]
             if not crit_incomplete:
                 return None
@@ -429,7 +497,14 @@ class DCMAChecks(BaseChecker):
         except Exception:
             return None
 
+    # ═══════════════════════════════════════════════════════
+    # DCMA-13 BEI CALCULATION
+    # ═══════════════════════════════════════════════════════
     def _calculate_bei(self):
+        """
+        BEI = Actual Finishes To Date / Baseline Finishes Scheduled To Date
+        Returns None (N/A) if data is insufficient.
+        """
         try:
             if not self.data_date:
                 return None
@@ -451,7 +526,15 @@ class DCMAChecks(BaseChecker):
         except Exception:
             return None
 
+    # ═══════════════════════════════════════════════════════
+    # DCMA-14 CRITICAL PATH CONTINUITY
+    # ═══════════════════════════════════════════════════════
     def _calculate_cp_continuity(self):
+        """
+        Measures whether critical activities form a continuous path.
+        Score = % of critical activities linked to another critical activity.
+        A truly continuous CP scores near 1.0.
+        """
         try:
             crit_ids = {str(a.get('task_id', '')) for a in self.incomplete if a.get('is_critical')}
             if not crit_ids:
@@ -459,10 +542,12 @@ class DCMAChecks(BaseChecker):
             
             connected = 0
             for cid in crit_ids:
+                # Check if any successor is also critical
                 succs = self.engine.successors.get(cid, [])
                 if any(str(s.get('task_id')) in crit_ids for s in succs):
                     connected += 1
                     continue
+                # Or if any predecessor is critical (end-of-path activities)
                 preds = self.engine.predecessors.get(cid, [])
                 if any(str(p.get('task_id')) in crit_ids for p in preds):
                     connected += 1

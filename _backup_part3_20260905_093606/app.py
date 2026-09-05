@@ -727,11 +727,12 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug_mode = os.environ.get('FLASK_ENV') != 'production'
 
-    logger.info("============================================================")
+    logger.info("=" * 60)
     logger.info("🚀 P6 SCHEDULE ANALYZER - ALL FEATURES READY")
-    logger.info("============================================================")
+    logger.info("=" * 60)
     logger.info("📌 Running on port %s", port)
     logger.info("🔧 Debug mode: %s", debug_mode)
-    logger.info("👉 Open in browser: http://localhost:%s", port)
+    logger.info("👉 Open in browser: http://localhost:%s
+", port)
 
     app.run(debug=debug_mode, host='0.0.0.0', port=port)

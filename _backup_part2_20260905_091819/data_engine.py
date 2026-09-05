@@ -19,7 +19,7 @@ class ScheduleEngine:
         self.relationships = []
         self.calendars = {}
         self.resources = []
-        self.resources_by_task = defaultdict(list)
+        self.resources_by_task = defaultdict(list)  # O(1) lookup
         self.activity_by_id = {}
         self.activity_by_code = {}
         self.wbs_by_id = {}
@@ -28,6 +28,10 @@ class ScheduleEngine:
         self.critical_activities = []
         self.dcma_results = {}
         self.schedule_stats = {}
+
+    # ═══════════════════════════════════════════════════════════
+    # DATA LOADING & TRANSFORMATION
+    # ═══════════════════════════════════════════════════════════
 
     def load_data(self, parsed_tables):
         print("\n🔄 Loading data into Schedule Engine...")
@@ -57,6 +61,7 @@ class ScheduleEngine:
         print(f"  📅 Calendars loaded: {len(self.calendars)}")
 
     def _get_hrs_per_day(self, clndr_id):
+        """Get hours per day from calendar, default to 8.0."""
         cal = self.calendars.get(clndr_id, {})
         hrs = self._to_float(cal.get('day_hr_cnt', 8.0))
         return hrs if hrs > 0 else 8.0
@@ -95,6 +100,7 @@ class ScheduleEngine:
                 'TT_WBS': 'WBS Summary', 'TT_FinMile': 'Finish Milestone'
             }.get(task_type, task_type)
 
+            # Critical = TF <= 0 AND not completed
             tf = act['total_float_days']
             act['is_critical'] = (tf <= 0) and (status != 'TK_Complete')
 
@@ -121,6 +127,7 @@ class ScheduleEngine:
                 'PR_FF': 'Finish-to-Finish', 'PR_SF': 'Start-to-Finish'
             }.get(pred_type, pred_type)
 
+            # Look up predecessor to get its calendar for lag conversion
             pred_act = self.activity_by_id.get(pred_task_id, {})
             hrs_per_day = self._get_hrs_per_day(pred_act.get('clndr_id', ''))
             
@@ -142,6 +149,10 @@ class ScheduleEngine:
             self.relationships.append(rel)
             
         print(f"  🔗 Relationships loaded: {len(self.relationships)}")
+
+    # ═══════════════════════════════════════════════════════════
+    # ANALYSIS & BASIC DCMA DASHBOARD 
+    # ═══════════════════════════════════════════════════════════
 
     def analyze(self):
         print("\n🔍 Running Schedule Analysis...")
@@ -177,6 +188,7 @@ class ScheduleEngine:
         ]
 
     def _run_dcma_checks(self):
+        """Basic DCMA for the main dashboard (advanced analytics uses standard modules)."""
         total = len(self.activities)
         if total == 0:
             return
@@ -241,6 +253,10 @@ class ScheduleEngine:
             '13_BEI': {'value': 'N/A', 'threshold': '≥ 0.95', 'pass': None},
             '14_Critical_Path_Pct': {'value': round(critical_pct, 1), 'threshold': '5-25%', 'pass': 5 <= critical_pct <= 25 if critical_pct > 0 else None}
         }
+
+    # ═══════════════════════════════════════════════════════════
+    # DASHBOARD API DATA PREPARATION
+    # ═══════════════════════════════════════════════════════════
 
     def get_dashboard_data(self):
         return {
@@ -365,6 +381,10 @@ class ScheduleEngine:
                 })
         return results
 
+    # ═══════════════════════════════════════════════════════════
+    # GANTT DATA EXPORT 
+    # ═══════════════════════════════════════════════════════════
+
     def get_gantt_data(self, max_activities=2000):
         tasks = []
         links = []
@@ -451,6 +471,7 @@ class ScheduleEngine:
                 
                 total_dur += float(act.get('original_duration_days', 0) or 0)
                 
+                # Use pre-indexed resources
                 for res in self.resources_by_task.get(str(act.get('task_id', '')), []):
                     total_budget += self._to_float(res.get('target_cost', '0'))
                     
@@ -489,6 +510,7 @@ class ScheduleEngine:
             }
             wbs_summary_tasks.append(wbs_task)
 
+        # Build activity tasks
         for act in real_activities:
             task_id = str(act.get('task_id', ''))
             start_str = act.get('act_start_date') or act.get('early_start_date') or act.get('target_start_date') or ''
@@ -511,10 +533,14 @@ class ScheduleEngine:
             budgeted_cost = 0.0
             primary_resource = ''
             
+            # Use pre-indexed resources
             for res in self.resources_by_task.get(task_id, []):
                 budgeted_cost += self._to_float(res.get('target_cost', '0'))
                 if not primary_resource:
                     primary_resource = resource_names.get(str(res.get('rsrc_id', '')), '')
+
+            # Note: Removed the fabricated $1000/day fake budget cost. 
+            # If the schedule is uncosted, it correctly exports as 0.
 
             is_milestone = act.get('task_type') in ['TT_Mile', 'TT_FinMile']
             is_loe = act.get('task_type') == 'TT_LOE'
@@ -549,6 +575,7 @@ class ScheduleEngine:
             }
             tasks.append(task)
 
+        # Build Links (2nd Pass to prevent dropped backward references)
         task_ids = {str(t['id']) for t in tasks}
         link_type_map = {'PR_FS': '0', 'PR_SS': '1', 'PR_FF': '2', 'PR_SF': '3'}
         
@@ -571,8 +598,12 @@ class ScheduleEngine:
             'total': len(tasks), 'wbs_summary_count': len(wbs_summary_tasks),
             'critical_count': sum(1 for t in tasks if t.get('is_critical')),
             'data_date': data_date.strftime('%Y-%m-%d') if data_date else '',
-            'groupable_values': {},
+            'groupable_values': {}, # Optional: keep metadata groups if frontend relies on it
         }
+
+    # ═══════════════════════════════════════════════════════════
+    # HELPERS
+    # ═══════════════════════════════════════════════════════════
 
     def _build_wbs_paths(self):
         wbs_paths = {}

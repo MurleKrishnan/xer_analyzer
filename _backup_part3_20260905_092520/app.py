@@ -1,6 +1,14 @@
 """
 P6 SCHEDULE ANALYZER - MAIN WEB APPLICATION (app.py)
 =====================================================
+Integrates:
+- Dashboard (XER parsing, DCMA basics, Excel export)
+- Gantt Chart (DHTMLX Gantt + WBS hierarchy)
+- Schedule Comparison (Baseline vs Current)
+- EVM & S-Curves (Earned Value Management)
+- Advanced Health Analytics (622+ checks across 6 standards)
+- PDF Reports (Executive + Action List with severity filter)
+- Excel Export (Top Actions with severity filter, one sheet per standard)
 """
 
 from flask import Flask, render_template, request, jsonify, send_file, session
@@ -12,6 +20,7 @@ import time
 import logging
 from datetime import datetime
 
+# ─── CONFIG & BRANDING IMPORTS ───
 try:
     from config import (
         get_config,
@@ -33,10 +42,12 @@ except ImportError:
             'features': {'gantt': True, 'comparison': True, 'evm': True, 'export': True, 'health': True}
         }
 
+# ─── CORE ENGINE IMPORTS ───
 from parser import XERParser
 from data_engine import ScheduleEngine
 from reports import ReportGenerator
 
+# ─── ADVANCED MODULE IMPORTS ───
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -69,23 +80,27 @@ except Exception as e:
     logger.warning("❌ PDFReportGenerator import failed: %s", e)
 
 
+# ─── INITIALIZE FLASK ───
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 CORS(app)
 
+# ─── CONFIGURATION ───
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
 ALLOWED_EXTENSIONS = {'xer'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE_MB * 1024 * 1024  # Enforce upload limit
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 
+# ─── STORAGE CLEANUP UTILITY ───
 def cleanup_old_files(folder, max_age_hours=SESSION_LIFETIME_HOURS):
+    """Purge temporary files older than specified hours."""
     if not os.path.exists(folder):
         return
     cutoff = time.time() - (max_age_hours * 3600)
@@ -98,13 +113,17 @@ def cleanup_old_files(folder, max_age_hours=SESSION_LIFETIME_HOURS):
         except Exception as e:
             logger.warning("Could not delete %s: %s", fname, e)
 
+# Run cleanup on application launch
 cleanup_old_files(UPLOAD_FOLDER)
 cleanup_old_files(OUTPUT_FOLDER)
 
 
+# ─── SESSION-SCORED IN-MEMORY STORAGE ───
+# Prevents multi-user data leakage when running on a shared server
 SESSION_STORAGE = {}
 
 def get_session_data():
+    """Retrieve or initialize user session storage."""
     sid = session.get('sid')
     if not sid or sid not in SESSION_STORAGE:
         sid = uuid.uuid4().hex
@@ -117,6 +136,7 @@ def get_session_data():
     return SESSION_STORAGE[sid]
 
 
+# ─── HELPER FUNCTIONS ───
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -135,12 +155,14 @@ def analyze_xer_file(file_path_or_stream, original_filename, session_data):
 
     dashboard_data = engine.get_dashboard_data()
 
+    # Store in session
     analysis = session_data['analysis']
     analysis['engine'] = engine
     analysis['dashboard_data'] = dashboard_data
     analysis['file_name'] = original_filename
     analysis['analyzed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+    # Invalidate health cache for new schedule
     session_data['health_cache'] = {}
 
     return dashboard_data
@@ -155,6 +177,10 @@ def inject_config():
 def request_entity_too_large(error):
     return jsonify({'error': f'File size exceeds maximum limit of {MAX_UPLOAD_SIZE_MB} MB.'}), 413
 
+
+# ════════════════════════════════════════════
+# ROUTE 1: MAIN DASHBOARD
+# ════════════════════════════════════════════
 
 @app.route('/')
 def home():
@@ -259,6 +285,10 @@ def export_excel():
     )
 
 
+# ════════════════════════════════════════════
+# ROUTE 2: GANTT CHART
+# ════════════════════════════════════════════
+
 @app.route('/gantt')
 def gantt_view():
     return render_template('gantt.html')
@@ -281,6 +311,10 @@ def get_gantt_data():
         'data': gantt_data
     })
 
+
+# ════════════════════════════════════════════
+# ROUTE 3: COMPARISON (Baseline vs Current)
+# ════════════════════════════════════════════
 
 @app.route('/comparison')
 def comparison_view():
@@ -351,6 +385,10 @@ def get_comparison_data():
     })
 
 
+# ════════════════════════════════════════════
+# ROUTE 4: EVM & S-CURVES
+# ════════════════════════════════════════════
+
 @app.route('/evm')
 def evm_view():
     return render_template('evm.html')
@@ -379,6 +417,10 @@ def get_evm_data():
         logger.exception("EVM calculation error")
         return jsonify({'error': str(e)}), 500
 
+
+# ════════════════════════════════════════════
+# ROUTE 5: HEALTH (Advanced Analytics)
+# ════════════════════════════════════════════
 
 @app.route('/health')
 def health_view():
@@ -411,6 +453,10 @@ def get_health_data():
         logger.exception("Health analysis error")
         return jsonify({'error': str(e)}), 500
 
+
+# ════════════════════════════════════════════
+# ROUTE 6: PDF REPORTS (with severity filter)
+# ════════════════════════════════════════════
 
 @app.route('/api/executive-pdf')
 def download_executive_pdf():
@@ -484,6 +530,10 @@ def download_actions_pdf():
         return jsonify({'error': str(e)}), 500
 
 
+# ════════════════════════════════════════════
+# ROUTE 7: TOP ACTIONS EXCEL EXPORT
+# ════════════════════════════════════════════
+
 @app.route('/api/actions-excel')
 def download_actions_excel():
     sess_data = get_session_data()
@@ -522,6 +572,7 @@ def download_actions_excel():
             if (a.get('severity') or 'low').lower() in allowed_severities
         ]
 
+        # Sheet 1: Report Info
         meta_rows = [
             ['Report Type', 'Schedule Health - Top Actions Export'],
             ['Selected Standard', selected_standard],
@@ -540,6 +591,7 @@ def download_actions_excel():
             ['Filtered Actions Count', len(filtered_top_actions)],
         ]
 
+        # Sheet 2: Top Actions Summary
         top_summary_rows = []
         for idx, action in enumerate(filtered_top_actions, 1):
             top_summary_rows.append({
@@ -666,6 +718,7 @@ def download_actions_excel():
 
                 pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
+            # Format Excel
             workbook = writer.book
             header_font = Font(bold=True, color='FFFFFF', size=11)
             header_fill = PatternFill(start_color='1E40AF', end_color='1E40AF', fill_type='solid')
@@ -723,15 +776,19 @@ def download_actions_excel():
         return jsonify({'error': str(e)}), 500
 
 
+# ════════════════════════════════════════════
+# LAUNCH SERVER
+# ════════════════════════════════════════════
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug_mode = os.environ.get('FLASK_ENV') != 'production'
 
-    logger.info("============================================================")
+    logger.info("=" * 60)
     logger.info("🚀 P6 SCHEDULE ANALYZER - ALL FEATURES READY")
-    logger.info("============================================================")
+    logger.info("=" * 60)
     logger.info("📌 Running on port %s", port)
     logger.info("🔧 Debug mode: %s", debug_mode)
-    logger.info("👉 Open in browser: http://localhost:%s", port)
+    logger.info("👉 Open in browser: http://localhost:%s\n", port)
 
     app.run(debug=debug_mode, host='0.0.0.0', port=port)

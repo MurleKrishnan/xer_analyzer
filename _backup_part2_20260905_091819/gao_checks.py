@@ -1,6 +1,10 @@
 """
 GAO SCHEDULE ASSESSMENT GUIDE
 ==============================
+Based on:
+- GAO-16-89G Schedule Assessment Guide
+- GAO 10 Best Practices for Project Schedules
+- Plus: Open Ends, FS+Lag, CP continuity, BP5 date integrity
 """
 
 from health_standards.base_checker import BaseChecker
@@ -30,6 +34,9 @@ class GAOChecks(BaseChecker):
             ]
         }
 
+    # ═══════════════════════════════════════════════════════
+    # BP1: CAPTURING ALL WORK
+    # ═══════════════════════════════════════════════════════
     def _bp1_capturing_work(self):
         checks = []
         total = len(self.activities) or 1
@@ -72,6 +79,9 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP1: Capturing All Work', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP2: SEQUENCING
+    # ═══════════════════════════════════════════════════════
     def _bp2_sequencing_activities(self):
         checks = []
         total = len(self.incomplete) or 1
@@ -163,6 +173,9 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP2: Sequencing Activities', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP3: RESOURCES
+    # ═══════════════════════════════════════════════════════
     def _bp3_resources_established(self):
         checks = []
 
@@ -212,6 +225,9 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP3: Resources Established', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP4: DURATIONS
+    # ═══════════════════════════════════════════════════════
     def _bp4_durations_established(self):
         checks = []
         total = len(self.incomplete) or 1
@@ -265,6 +281,9 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP4: Realistic Durations', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP5: SCHEDULE VERIFIED (integrity + light integration)
+    # ═══════════════════════════════════════════════════════
     def _bp5_schedule_verified(self):
         checks = []
         total = len(self.activities) or 1
@@ -319,6 +338,7 @@ class GAOChecks(BaseChecker):
             future_acts
         ))
 
+        # Vertical integration heuristic: WBS summary EF before max child EF
         vertical_issues = self._vertical_integration_issues()
         checks.append(self.make_check(
             'GAO-505', 'Vertical Integration (WBS vs Detail)',
@@ -331,6 +351,10 @@ class GAOChecks(BaseChecker):
         return {'name': 'BP5: Schedule Verified', 'checks': checks}
 
     def _vertical_integration_issues(self):
+        """
+        Flag WBS nodes whose rolled child EF is later than any TT_WBS task
+        sitting on that WBS (when present). Lightweight proxy for BP5 vertical integration.
+        """
         issues = []
         acts_by_wbs = defaultdict(list)
         for a in self.real_activities:
@@ -352,6 +376,9 @@ class GAOChecks(BaseChecker):
                 issues.append(wbs_task)
         return issues
 
+    # ═══════════════════════════════════════════════════════
+    # BP6: CRITICAL PATH TRACED
+    # ═══════════════════════════════════════════════════════
     def _bp6_critical_path_traced(self):
         checks = []
         total_inc = len(self.incomplete) or 1
@@ -411,6 +438,9 @@ class GAOChecks(BaseChecker):
         except Exception:
             return None
 
+    # ═══════════════════════════════════════════════════════
+    # BP7: FLOAT
+    # ═══════════════════════════════════════════════════════
     def _bp7_float_analyzed(self):
         checks = []
         total = len(self.incomplete) or 1
@@ -454,6 +484,9 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP7: Float Analyzed', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP8: BASELINE (target dates proxy)
+    # ═══════════════════════════════════════════════════════
     def _bp8_baseline_established(self):
         checks = []
         pool = self.real_activities
@@ -481,13 +514,18 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP8: Baseline Established', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP9: UPDATES MAINTAINED
+    # ═══════════════════════════════════════════════════════
     def _bp9_updates_maintained(self):
         checks = []
         total = len(self.activities) or 1
 
         if self.data_date:
+            # Prefer ERMHDR export date if engine stored it; else wall clock
             ref = datetime.now()
             age = (ref - self.data_date).days
+            # Stale demo XERs: do not hard-fail ancient snapshots
             info_only = age > 365
             checks.append(self.make_metric(
                 'GAO-901', 'Data Date Age',
@@ -526,6 +564,9 @@ class GAOChecks(BaseChecker):
 
         return {'name': 'BP9: Updates Maintained', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # BP10: RISK INDICATORS (deterministic proxies)
+    # ═══════════════════════════════════════════════════════
     def _bp10_risk_managed(self):
         checks = []
         total_inc = len(self.incomplete) or 1
@@ -573,6 +614,7 @@ class GAOChecks(BaseChecker):
             neg
         ))
 
+        # Risk concentration: remaining duration on near-critical
         near = [a for a in self.incomplete if a.get('total_float_days', 0) <= 5]
         near_rem = sum(a.get('remaining_duration_days', 0) or 0 for a in near)
         all_rem = sum(a.get('remaining_duration_days', 0) or 0 for a in self.incomplete) or 1

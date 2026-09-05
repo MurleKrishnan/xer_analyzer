@@ -1,6 +1,11 @@
 """
 NASA NPR 7120.5 SCHEDULE MANAGEMENT
 ====================================
+Based on:
+- NASA NPR 7120.5F (NASA Space Flight PM Requirements)
+- NASA Schedule Management Handbook (NASA/SP-2010-3403)
+- NASA Cost Estimating Handbook
+- Plus: Open Ends, FS+Lag, CP continuity
 """
 
 from health_standards.base_checker import BaseChecker
@@ -26,6 +31,9 @@ class NASAChecks(BaseChecker):
             ]
         }
 
+    # ═══════════════════════════════════════════════════════
+    # WBS HELPERS
+    # ═══════════════════════════════════════════════════════
     def _wbs_maps(self):
         by_id = {str(w.get('wbs_id', '')): w for w in self.wbs_nodes if w.get('wbs_id')}
 
@@ -72,6 +80,9 @@ class NASAChecks(BaseChecker):
             'max_depth': max_depth,
         }
 
+    # ═══════════════════════════════════════════════════════
+    # STRUCTURE
+    # ═══════════════════════════════════════════════════════
     def _schedule_structure(self):
         checks = []
         total = len(self.activities) or 1
@@ -85,6 +96,7 @@ class NASAChecks(BaseChecker):
             recommendation='IMS should contain sufficient detail for management.'
         ))
 
+        # Leaf WBS coverage — parents without direct acts are OK
         leaf_total = len(wbs['leaf_ids']) or 1
         leaf_covered = len(wbs['leaves_with_acts'])
         coverage = leaf_covered / leaf_total * 100
@@ -150,6 +162,9 @@ class NASAChecks(BaseChecker):
 
         return {'name': 'Schedule Structure', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # LOGIC & NETWORK
+    # ═══════════════════════════════════════════════════════
     def _logic_integrity(self):
         checks = []
         total = len(self.incomplete) or 1
@@ -261,6 +276,9 @@ class NASAChecks(BaseChecker):
 
         return {'name': 'Logic & Network Integrity', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # DURATION
+    # ═══════════════════════════════════════════════════════
     def _duration_analysis(self):
         checks = []
         total = len(self.incomplete) or 1
@@ -306,6 +324,7 @@ class NASAChecks(BaseChecker):
             very_short
         ))
 
+        # NASA ~4 reporting months ≈ 88 working days
         excessive = [
             a for a in self.incomplete
             if a.get('original_duration_days', 0) > 88
@@ -322,6 +341,9 @@ class NASAChecks(BaseChecker):
 
         return {'name': 'Duration Analysis', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # MILESTONES
+    # ═══════════════════════════════════════════════════════
     def _milestone_management(self):
         checks = []
         total = len(self.activities) or 1
@@ -348,6 +370,8 @@ class NASAChecks(BaseChecker):
             mile_with_dur
         ))
 
+        # Finish-style milestones should have predecessors
+        # Include TT_FinMile always; TT_Mile with no successors often used as finish
         finish_miles = [
             a for a in self.milestones
             if a.get('task_type') == 'TT_FinMile'
@@ -379,6 +403,9 @@ class NASAChecks(BaseChecker):
 
         return {'name': 'Milestone Management', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # CRITICAL PATH
+    # ═══════════════════════════════════════════════════════
     def _critical_path_analysis(self):
         checks = []
         total_inc = len(self.incomplete) or 1
@@ -449,6 +476,9 @@ class NASAChecks(BaseChecker):
         except Exception:
             return None
 
+    # ═══════════════════════════════════════════════════════
+    # MATURITY / RISK
+    # ═══════════════════════════════════════════════════════
     def _risk_maturity(self):
         checks = []
         total = len(self.activities) or 1

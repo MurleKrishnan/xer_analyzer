@@ -1,6 +1,11 @@
 """
 INDUSTRY BEST PRACTICES
 ========================
+Consensus checks based on:
+- PMI PMBOK Practice Standard for Scheduling
+- Construction Industry Institute (CII) practices
+- ISO 21500 & ISO 21502
+- Industry consensus guidelines
 """
 
 from health_standards.base_checker import BaseChecker
@@ -26,6 +31,9 @@ class IndustryChecks(BaseChecker):
             ]
         }
 
+    # ═══════════════════════════════════════════════════════
+    # HELPERS
+    # ═══════════════════════════════════════════════════════
     def _wbs_max_depth(self):
         by_id = {str(w.get('wbs_id', '')): w for w in self.wbs_nodes if w.get('wbs_id')}
 
@@ -50,6 +58,10 @@ class IndustryChecks(BaseChecker):
         return max((depth(wid) for wid in by_id), default=0)
 
     def _has_circular_logic(self):
+        """
+        Kahn's algorithm topological sort.
+        Returns True if a cycle exists.
+        """
         graph = defaultdict(list)
         in_degree = defaultdict(int)
         nodes = set()
@@ -89,6 +101,9 @@ class IndustryChecks(BaseChecker):
 
         return visited != len(nodes)
 
+    # ═══════════════════════════════════════════════════════
+    # 1. COMPLETENESS
+    # ═══════════════════════════════════════════════════════
     def _schedule_completeness(self):
         checks = []
         total = len(self.activities) or 1
@@ -138,6 +153,9 @@ class IndustryChecks(BaseChecker):
 
         return {'name': 'Schedule Completeness', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 2. LOGIC QUALITY
+    # ═══════════════════════════════════════════════════════
     def _logic_quality(self):
         checks = []
         total_inc = len(self.incomplete) or 1
@@ -164,6 +182,7 @@ class IndustryChecks(BaseChecker):
             recommendation='Industry norm: 80%+ FS relationships.'
         ))
 
+        # Dangling = open start OR open end (incomplete, non-milestone)
         open_start = self.open_start_activities()
         open_end = self.open_end_activities()
         dangling_ids = {str(a.get('task_id')) for a in open_start} | {
@@ -225,6 +244,9 @@ class IndustryChecks(BaseChecker):
 
         return {'name': 'Logic Quality', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 3. RESOURCE REALISM
+    # ═══════════════════════════════════════════════════════
     def _resource_realism(self):
         checks = []
 
@@ -259,6 +281,7 @@ class IndustryChecks(BaseChecker):
             threshold_max=15, severity='medium',
             recommendation='Industry norm: <15% unresourced work when loading is required.'
         ))
+        # Also attach list via a companion check for exports
         checks.append(self.make_check(
             'IND-302b', 'Unresourced Work Activities (List)',
             'Work activities without resource assignments',
@@ -279,6 +302,9 @@ class IndustryChecks(BaseChecker):
 
         return {'name': 'Resource Realism', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 4. PROGRESS TRANSPARENCY
+    # ═══════════════════════════════════════════════════════
     def _progress_transparency(self):
         checks = []
         total = len(self.activities) or 1
@@ -334,6 +360,9 @@ class IndustryChecks(BaseChecker):
 
         return {'name': 'Progress Transparency', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 5. OPTIMIZATION
+    # ═══════════════════════════════════════════════════════
     def _schedule_optimization(self):
         checks = []
         total_inc = len(self.incomplete) or 1
@@ -347,6 +376,7 @@ class IndustryChecks(BaseChecker):
             constrained
         ))
 
+        # True duplicates: same pred, succ, AND type (ladder SS+FF is OK)
         rel_tuples = [
             (str(r.get('pred_task_id', '')), str(r.get('task_id', '')), r.get('pred_type', ''))
             for r in self.relationships
@@ -395,6 +425,9 @@ class IndustryChecks(BaseChecker):
 
         return {'name': 'Optimization Opportunities', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 6. MAINTAINABILITY
+    # ═══════════════════════════════════════════════════════
     def _maintainability(self):
         checks = []
         total = len(self.activities) or 1

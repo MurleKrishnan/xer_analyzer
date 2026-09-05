@@ -1,6 +1,12 @@
 """
 AACE INTERNATIONAL SCHEDULE PRACTICES
 ======================================
+Based on:
+- AACE RP 29R-03 (Forensic Schedule Analysis)
+- AACE RP 32R-04 (Determining Activity Durations)
+- AACE RP 37R-06 (Schedule Level of Detail)
+- AACE RP 38R-06 (Documenting the Schedule Basis)
+- Plus: Open Ends, FS+Lag, Ladder Logic (SS+FF)
 """
 
 from health_standards.base_checker import BaseChecker
@@ -25,6 +31,9 @@ class AACEChecks(BaseChecker):
             ]
         }
 
+    # ═══════════════════════════════════════════════════════
+    # WBS HIERARCHY HELPER
+    # ═══════════════════════════════════════════════════════
     def _wbs_maps(self):
         by_id = {str(w.get('wbs_id', '')): w for w in self.wbs_nodes if w.get('wbs_id')}
 
@@ -49,10 +58,14 @@ class AACEChecks(BaseChecker):
         max_depth = max((depth(wid) for wid in by_id), default=0)
         return max_depth
 
+    # ═══════════════════════════════════════════════════════
+    # 1. ACTIVITY DEFINITION (RP 32R-04)
+    # ═══════════════════════════════════════════════════════
     def _activity_definition(self):
         checks = []
         total = len(self.activities) or 1
         
+        # AACE-101: Activity Discreteness
         checks.append(self.make_metric(
             'AACE-101', 'Discrete Activity Count',
             f'{len(self.real_activities)} discrete activities',
@@ -60,6 +73,7 @@ class AACEChecks(BaseChecker):
             threshold_min=10, severity='low', info_only=True
         ))
         
+        # AACE-102: LOE Percentage
         loe = sum(1 for a in self.activities if a.get('task_type') == 'TT_LOE')
         loe_pct = loe / total * 100
         checks.append(self.make_metric(
@@ -70,6 +84,7 @@ class AACEChecks(BaseChecker):
             recommendation='AACE recommends LOE < 10% of activities.'
         ))
         
+        # AACE-103: Meaningful Activity Names
         generic_names = {'TASK', 'WORK', 'ACTIVITY', 'ITEM', 'TEST', 'DO', 'COMPLETE', 'NEW TASK'}
         generic = [
             a for a in self.activities 
@@ -83,6 +98,7 @@ class AACEChecks(BaseChecker):
             generic
         ))
         
+        # AACE-104: Milestone Types
         start_mile = sum(1 for a in self.activities if a.get('task_type') == 'TT_Mile')
         finish_mile = sum(1 for a in self.activities if a.get('task_type') == 'TT_FinMile')
         checks.append(self.make_metric(
@@ -94,6 +110,9 @@ class AACEChecks(BaseChecker):
         
         return {'name': 'Activity Definition (RP 32R-04)', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 2. DURATION ESTIMATION (RP 32R-04)
+    # ═══════════════════════════════════════════════════════
     def _duration_estimation(self):
         checks = []
         total_inc = len(self.incomplete) or 1
@@ -103,6 +122,7 @@ class AACEChecks(BaseChecker):
             if a.get('original_duration_days', 0) > 0
         ]
         
+        # AACE-201 & 202: Duration Statistics
         if durations:
             avg = statistics.mean(durations)
             median = statistics.median(durations)
@@ -122,6 +142,7 @@ class AACEChecks(BaseChecker):
                 threshold_min=1, threshold_max=20, severity='low', info_only=True
             ))
         
+        # AACE-203: Duration Buckets
         if durations:
             v_short = sum(1 for d in durations if d < 1)
             short = sum(1 for d in durations if 1 <= d < 5)
@@ -136,6 +157,7 @@ class AACEChecks(BaseChecker):
                 severity='low', info_only=True
             ))
         
+        # AACE-204: AACE Recommended Max (44 days per RP 37R-06)
         long_acts = [
             a for a in self.incomplete 
             if a.get('original_duration_days', 0) > 44
@@ -149,6 +171,7 @@ class AACEChecks(BaseChecker):
             long_acts
         ))
         
+        # AACE-205: Duration Rounding
         round_5 = sum(1 for d in durations if d > 0 and d % 5 == 0)
         round_pct = round_5 / len(durations) * 100 if durations else 0
         checks.append(self.make_metric(
@@ -161,12 +184,16 @@ class AACEChecks(BaseChecker):
         
         return {'name': 'Duration Estimation (RP 32R-04)', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 3. LOGIC RELATIONSHIPS
+    # ═══════════════════════════════════════════════════════
     def _logic_relationships(self):
         checks = []
         total_inc = len(self.incomplete) or 1
         active_rels = self.active_relationships()
         rel_total = len(active_rels) or 1
         
+        # AACE-301: Relationship Type Distribution
         type_counts = Counter(r.get('pred_type', '') for r in active_rels)
         fs = type_counts.get('PR_FS', 0)
         fs_pct = fs / rel_total * 100
@@ -179,6 +206,7 @@ class AACEChecks(BaseChecker):
             recommendation='AACE recommends 80%+ FS relationships.'
         ))
         
+        # AACE-302: SS with matching FF (Ladder Logic Pairs)
         ss_pairs = set((str(r.get('pred_task_id')), str(r.get('task_id'))) 
                       for r in active_rels if r.get('pred_type') == 'PR_SS')
         ff_pairs = set((str(r.get('pred_task_id')), str(r.get('task_id'))) 
@@ -193,6 +221,7 @@ class AACEChecks(BaseChecker):
             recommendation='Ladder logic is acceptable for overlapping activities.'
         ))
         
+        # AACE-303: Lag Analysis
         lags = [r.get('lag_days', 0) for r in active_rels if r.get('lag_days', 0) != 0]
         if lags:
             avg_lag = statistics.mean([abs(l) for l in lags])
@@ -204,6 +233,7 @@ class AACEChecks(BaseChecker):
                 recommendation='High avg lag indicates over-reliance on lags.'
             ))
         
+        # AACE-304: SF Relationships
         sf_rels = [r for r in active_rels if r.get('pred_type') == 'PR_SF']
         checks.append(self.make_check(
             'AACE-304', 'SF Relationships',
@@ -213,6 +243,7 @@ class AACEChecks(BaseChecker):
             sf_rels
         ))
         
+        # Open Ends via shared base helpers
         open_start = self.open_start_activities()
         open_end = self.open_end_activities()
         
@@ -232,6 +263,7 @@ class AACEChecks(BaseChecker):
             open_end
         ))
         
+        # FS + Lag via shared base helper
         fs_lag = self.fs_with_lag()
         checks.append(self.make_check(
             'AACE-FS-LAG', 'FS + Lag Relationships',
@@ -243,6 +275,9 @@ class AACEChecks(BaseChecker):
         
         return {'name': 'Logic Relationships', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 4. RESOURCE LOADING
+    # ═══════════════════════════════════════════════════════
     def _resource_loading(self):
         checks = []
         
@@ -284,10 +319,14 @@ class AACEChecks(BaseChecker):
         
         return {'name': 'Resource Loading', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 5. FORENSIC READINESS (RP 29R-03)
+    # ═══════════════════════════════════════════════════════
     def _forensic_readiness(self):
         checks = []
         total = len(self.activities) or 1
         
+        # AACE-501: Baseline for Forensics
         with_bl = sum(1 for a in self.real_activities if a.get('target_start_date', ''))
         bl_pct = with_bl / max(len(self.real_activities), 1) * 100
         checks.append(self.make_metric(
@@ -298,6 +337,7 @@ class AACEChecks(BaseChecker):
             recommendation='Complete baseline is critical for forensic delay analysis.'
         ))
         
+        # AACE-502: Actual Dates Documented
         with_actuals = sum(
             1 for a in self.activities 
             if a.get('act_start_date', '') or a.get('act_end_date', '')
@@ -310,6 +350,7 @@ class AACEChecks(BaseChecker):
             severity='low', info_only=True
         ))
         
+        # AACE-503: Data Date Presence
         checks.append(self.make_boolean(
             'AACE-503', 'Data Date Set',
             'Required for time-slice analysis',
@@ -318,6 +359,7 @@ class AACEChecks(BaseChecker):
             recommendation='Data date required for forensic time-slice analysis.'
         ))
         
+        # AACE-504: Calendar Definitions
         checks.append(self.make_metric(
             'AACE-504', 'Calendar Definitions',
             f'{len(self.calendars)} calendars',
@@ -328,9 +370,13 @@ class AACEChecks(BaseChecker):
         
         return {'name': 'Forensic Readiness (RP 29R-03)', 'checks': checks}
 
+    # ═══════════════════════════════════════════════════════
+    # 6. LEVEL OF DETAIL (RP 37R-06)
+    # ═══════════════════════════════════════════════════════
     def _schedule_level_detail(self):
         checks = []
         
+        # AACE-601: Level Determination
         act_count = len(self.real_activities)
         if act_count < 100:
             level = 'Level 1 (Summary)'
@@ -350,6 +396,7 @@ class AACEChecks(BaseChecker):
             severity='low', info_only=True
         ))
         
+        # AACE-602: WBS Depth (Parent Hierarchy)
         max_depth = self._wbs_maps()
         checks.append(self.make_metric(
             'AACE-602', 'WBS Depth',
@@ -359,6 +406,7 @@ class AACEChecks(BaseChecker):
             recommendation='AACE recommends 2-8 WBS levels.'
         ))
         
+        # AACE-603: Consistency of Detail (Coefficient of Variation)
         wbs_counts = Counter(
             str(a.get('wbs_id', '')) for a in self.activities if a.get('wbs_id')
         )

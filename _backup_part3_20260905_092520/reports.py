@@ -1,7 +1,11 @@
 """
 REPORT GENERATOR
 ================
-Creates Excel reports from the Schedule Engine results.
+Creates Excel reports from the Schedule Engine results
+(basic dashboard DCMA + activities dump).
+
+Advanced 622+ health Excel is handled separately in app.py
+(/api/actions-excel).
 """
 
 import os
@@ -12,10 +16,22 @@ logger = logging.getLogger(__name__)
 
 
 class ReportGenerator:
+    """
+    Generates Excel reports from schedule analysis results.
+
+    USAGE:
+        reporter = ReportGenerator(engine)
+        reporter.generate_full_report("output/schedule_report.xlsx")
+    """
+
     def __init__(self, engine):
         self.engine = engine
 
     def generate_full_report(self, output_path):
+        """
+        Create a multi-tab Excel workbook:
+        Summary | DCMA 14-Point | Activities | Critical Path | Relationships | Issues
+        """
         try:
             import pandas as pd
             from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -39,6 +55,7 @@ class ReportGenerator:
             self._write_relationships_tab(writer, pd)
             self._write_issues_tab(writer, pd)
 
+            # Format all sheets
             workbook = writer.book
             for sheet_name in workbook.sheetnames:
                 self._style_worksheet(
@@ -49,6 +66,10 @@ class ReportGenerator:
         logger.info("✅ Report saved: %s", output_path)
         print(f"  ✅ Report saved: {output_path}")
         return output_path
+
+    # ═══════════════════════════════════════════════════════
+    # TABS
+    # ═══════════════════════════════════════════════════════
 
     def _write_summary_tab(self, writer, pd):
         stats = self.engine.schedule_stats or {}
@@ -92,12 +113,14 @@ class ReportGenerator:
 
         df = pd.DataFrame(rows, columns=['Metric', 'Value'])
         df.to_excel(writer, sheet_name='Summary', index=False)
+        print("  📊 Summary tab created")
 
     def _write_dcma_tab(self, writer, pd):
         rows = []
         for check_name, result in (self.engine.dcma_results or {}).items():
             clean_name = check_name.replace('_', ' ')
             has_pct = 'pct' in result
+            has_count = 'count' in result
 
             if result.get('pass') is True:
                 status = 'PASS'
@@ -129,10 +152,14 @@ class ReportGenerator:
             })
 
         if not rows:
-            rows = [{'Check': 'No DCMA results', 'Value': '', 'Count': '', 'Total': '', 'Threshold': '', 'Result': 'N/A'}]
+            rows = [{'Check': 'No DCMA results', 'Value': '', 'Count': '', 'Total': '',
+                     'Threshold': '', 'Result': 'N/A'}]
 
-        df = pd.DataFrame(rows)[['Check', 'Value', 'Count', 'Total', 'Threshold', 'Result']]
+        df = pd.DataFrame(rows)
+        # Column order: Result at index 5 for styling — use explicit order
+        df = df[['Check', 'Value', 'Count', 'Total', 'Threshold', 'Result']]
         df.to_excel(writer, sheet_name='DCMA 14-Point', index=False)
+        print("  🏥 DCMA tab created")
 
     def _write_activities_tab(self, writer, pd):
         df = None
@@ -140,28 +167,57 @@ class ReportGenerator:
             df = self.engine.get_activities_dataframe()
 
         if df is None or df.empty:
-            cols = ['task_code', 'task_name', 'wbs_code', 'wbs_name', 'status_text', 'type_text',
-                    'original_duration_days', 'remaining_duration_days', 'total_float_days',
-                    'is_critical', 'early_start_date', 'early_end_date', 'phys_complete_pct']
+            # Fallback build
+            cols = [
+                'task_code', 'task_name', 'wbs_code', 'wbs_name', 'status_text', 'type_text',
+                'original_duration_days', 'remaining_duration_days', 'total_float_days',
+                'is_critical', 'early_start_date', 'early_end_date', 'phys_complete_pct'
+            ]
             data = [{c: a.get(c, '') for c in cols} for a in self.engine.activities]
             df = pd.DataFrame(data)
 
         rename = {
-            'task_code': 'Activity ID', 'task_name': 'Activity Name', 'wbs_code': 'WBS Code',
-            'wbs_name': 'WBS', 'status_text': 'Status', 'type_text': 'Type',
-            'original_duration_days': 'Original Duration (d)', 'remaining_duration_days': 'Remaining Duration (d)',
-            'total_float_days': 'Total Float (d)', 'free_float_days': 'Free Float (d)',
-            'is_critical': 'Critical', 'early_start_date': 'Early Start', 'early_end_date': 'Early Finish',
-            'late_start_date': 'Late Start', 'late_end_date': 'Late Finish', 'target_start_date': 'Target Start',
-            'target_end_date': 'Target Finish', 'act_start_date': 'Actual Start', 'act_end_date': 'Actual Finish',
+            'task_code': 'Activity ID',
+            'task_name': 'Activity Name',
+            'wbs_code': 'WBS Code',
+            'wbs_name': 'WBS',
+            'status_text': 'Status',
+            'type_text': 'Type',
+            'original_duration_days': 'Original Duration (d)',
+            'remaining_duration_days': 'Remaining Duration (d)',
+            'total_float_days': 'Total Float (d)',
+            'free_float_days': 'Free Float (d)',
+            'is_critical': 'Critical',
+            'early_start_date': 'Early Start',
+            'early_end_date': 'Early Finish',
+            'late_start_date': 'Late Start',
+            'late_end_date': 'Late Finish',
+            'target_start_date': 'Target Start',
+            'target_end_date': 'Target Finish',
+            'act_start_date': 'Actual Start',
+            'act_end_date': 'Actual Finish',
             'phys_complete_pct': 'Physical %',
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
         df.to_excel(writer, sheet_name='Activities', index=False)
+        print(f"  📌 Activities tab created ({len(df)} rows)")
 
     def _write_critical_path_tab(self, writer, pd):
-        columns = ['task_code', 'task_name', 'wbs_name', 'original_duration_days', 'total_float_days', 'early_start_date', 'early_end_date', 'status_text']
-        rename = {'task_code': 'Activity ID', 'task_name': 'Activity Name', 'wbs_name': 'WBS', 'original_duration_days': 'Duration (d)', 'total_float_days': 'Total Float (d)', 'early_start_date': 'Early Start', 'early_end_date': 'Early Finish', 'status_text': 'Status'}
+        columns = [
+            'task_code', 'task_name', 'wbs_name',
+            'original_duration_days', 'total_float_days',
+            'early_start_date', 'early_end_date', 'status_text'
+        ]
+        rename = {
+            'task_code': 'Activity ID',
+            'task_name': 'Activity Name',
+            'wbs_name': 'WBS',
+            'original_duration_days': 'Duration (d)',
+            'total_float_days': 'Total Float (d)',
+            'early_start_date': 'Early Start',
+            'early_end_date': 'Early Finish',
+            'status_text': 'Status',
+        }
 
         crit = getattr(self.engine, 'critical_activities', []) or []
         rows = [{col: act.get(col, '') for col in columns} for act in crit]
@@ -172,10 +228,21 @@ class ReportGenerator:
             df = pd.DataFrame(rows).rename(columns=rename)
 
         df.to_excel(writer, sheet_name='Critical Path', index=False)
+        print(f"  🔴 Critical Path tab created ({len(crit)} rows)")
 
     def _write_relationships_tab(self, writer, pd):
-        columns = ['pred_code', 'pred_name', 'succ_code', 'succ_name', 'type_text', 'lag_days']
-        rename = {'pred_code': 'Predecessor ID', 'pred_name': 'Predecessor Name', 'succ_code': 'Successor ID', 'succ_name': 'Successor Name', 'type_text': 'Type', 'lag_days': 'Lag (d)'}
+        columns = [
+            'pred_code', 'pred_name', 'succ_code', 'succ_name',
+            'type_text', 'lag_days'
+        ]
+        rename = {
+            'pred_code': 'Predecessor ID',
+            'pred_name': 'Predecessor Name',
+            'succ_code': 'Successor ID',
+            'succ_name': 'Successor Name',
+            'type_text': 'Type',
+            'lag_days': 'Lag (d)',
+        }
 
         rels = getattr(self.engine, 'relationships', []) or []
         rows = [{col: rel.get(col, '') for col in columns} for rel in rels]
@@ -186,6 +253,7 @@ class ReportGenerator:
             df = pd.DataFrame(rows).rename(columns=rename)
 
         df.to_excel(writer, sheet_name='Relationships', index=False)
+        print(f"  🔗 Relationships tab created ({len(rels)} rows)")
 
     def _write_issues_tab(self, writer, pd):
         issues = []
@@ -199,8 +267,14 @@ class ReportGenerator:
 
             if not items:
                 issues.append({
-                    'Issue Type': clean_check, 'Activity ID': '', 'Activity Name': '(No item list)',
-                    'WBS': '', 'Status': '', 'Total Float': '', 'Duration': '', 'Detail': f"Count={result.get('count', '')}",
+                    'Issue Type': clean_check,
+                    'Activity ID': '',
+                    'Activity Name': '(No item list)',
+                    'WBS': '',
+                    'Status': '',
+                    'Total Float': '',
+                    'Duration': '',
+                    'Detail': f"Count={result.get('count', '')}",
                 })
                 continue
 
@@ -223,23 +297,47 @@ class ReportGenerator:
             df = pd.DataFrame(issues)
 
         df.to_excel(writer, sheet_name='Issues', index=False)
+        print(f"  ⚠️ Issues tab created ({len(issues)} rows)")
 
     def _format_issue_item(self, item):
+        """
+        Normalize activity or relationship dict into (id, name, detail).
+        """
         if not isinstance(item, dict):
             return str(item), '', ''
 
-        if ('pred_code' in item or 'succ_code' in item or 'pred_task_id' in item or item.get('pred_type') or item.get('type_text')):
+        # Relationship-like
+        if (
+            'pred_code' in item
+            or 'succ_code' in item
+            or 'pred_task_id' in item
+            or item.get('pred_type')
+            or item.get('type_text')
+        ):
             p = item.get('pred_code') or item.get('pred_task_id', '')
             s = item.get('succ_code') or item.get('task_code') or item.get('task_id', '')
             pn = item.get('pred_name', '')
             sn = item.get('succ_name', '')
             rt = item.get('type_text') or item.get('pred_type', '')
             lag = item.get('lag_days', '')
-            return f"{p} → {s}", f"{pn} → {sn}", f"{rt}, lag={lag}"
+            return (
+                f"{p} → {s}",
+                f"{pn} → {sn}",
+                f"{rt}, lag={lag}",
+            )
 
-        return item.get('task_code', '') or item.get('wbs_short_name', ''), item.get('task_name', '') or item.get('wbs_name', ''), ''
+        return (
+            item.get('task_code', '') or item.get('wbs_short_name', ''),
+            item.get('task_name', '') or item.get('wbs_name', ''),
+            '',
+        )
+
+    # ═══════════════════════════════════════════════════════
+    # STYLING
+    # ═══════════════════════════════════════════════════════
 
     def _style_worksheet(self, ws, pass_fail_col=None):
+        """Apply header style, freeze panes, column widths, optional PASS/FAIL colors."""
         from openpyxl.styles import Font, PatternFill, Alignment
 
         header_font = Font(bold=True, color='FFFFFF', size=11)
@@ -258,6 +356,7 @@ class ReportGenerator:
 
         ws.freeze_panes = 'A2'
 
+        # Auto width (capped)
         for col in ws.columns:
             max_len = 8
             col_letter = col[0].column_letter
@@ -270,6 +369,7 @@ class ReportGenerator:
                     pass
             ws.column_dimensions[col_letter].width = min(max_len + 2, 55)
 
+        # PASS/FAIL coloring — find Result column by header name
         result_col_idx = None
         for idx, cell in enumerate(ws[1], start=1):
             if str(cell.value).strip().lower() == 'result':

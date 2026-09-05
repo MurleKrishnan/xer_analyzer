@@ -306,14 +306,10 @@ class ScheduleComparator:
         }
 
     def _get_best_start_date(self, act):
-        return act.get('act_start_date_parsed') or \
-               act.get('early_start_date_parsed') or \
-               act.get('target_start_date_parsed')
+        return act.get('act_start_date_parsed') or                act.get('early_start_date_parsed') or                act.get('target_start_date_parsed')
 
     def _get_best_finish_date(self, act):
-        return act.get('act_end_date_parsed') or \
-               act.get('early_end_date_parsed') or \
-               act.get('target_end_date_parsed')
+        return act.get('act_end_date_parsed') or                act.get('early_end_date_parsed') or                act.get('target_end_date_parsed')
 
     def _get_schedule_info(self, engine):
         info = engine._get_project_info() if hasattr(engine, '_get_project_info') else {}
